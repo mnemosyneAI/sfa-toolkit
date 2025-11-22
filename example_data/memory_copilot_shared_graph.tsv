@@ -1,0 +1,12 @@
+archived_date	id	type	stance	timestamp	certainty	perspective	domain	ref1	ref2	content	relation	weight	schema
+	pref_shell	item	fact	2025-11-19T14:00:00Z	1.0	user	coding			pwsh (PowerShell) is the required shell environment			1.0
+	pref_runner	item	fact	2025-11-19T14:00:00Z	1.0	user	coding			uv is the required Python runner and dependency manager			1.0
+	pref_paths	item	fact	2025-11-19T14:00:00Z	1.0	user	coding			Always use pathlib.Path objects, never string manipulation for paths			1.0
+	pref_security	item	fact	2025-11-19T14:00:00Z	1.0	user	security			Use runtime --allowed-paths injection, never static config files			1.0
+	pref_philosophy	item	opinion	2025-11-19T14:00:00Z	1.0	user	architecture			Unix Philosophy: Small tools, text streams, flat files (TSV/YMJ)			1.0
+	pref_agents	item	opinion	2025-11-19T14:00:00Z	1.0	user	architecture			Agents should be ephemeral (Temp Agency model), not long-running processes			1.0
+	pref_tone	item	fact	2025-11-19T14:00:00Z	1.0	user	collaboration			Professional, operational tone. No 'ridiculousness'.			1.0
+	ctx_ymj	item	fact	2025-11-19T14:00:00Z	1.0	system	project			User is the author of YMJ (YAML-Markdown-JSON) format			1.0
+	ctx_skg	item	fact	2025-11-19T14:00:00Z	1.0	system	project			User is the author of SKG (Serverless Knowledge Graph) format			1.0
+	link_shell_phil	link	opinion	2025-11-19T14:00:00Z	0.8	system	architecture	pref_shell	pref_philosophy		aligns_with	1.0	1.0
+	link_uv_phil	link	opinion	2025-11-19T14:00:00Z	0.8	system	architecture	pref_runner	pref_philosophy		enables	1.0	1.0

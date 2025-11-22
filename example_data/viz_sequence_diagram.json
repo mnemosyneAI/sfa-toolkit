@@ -1,0 +1,15 @@
+[
+    {"from": "User", "to": "Frontend", "label": "Click 'Login'"},
+    {"from": "Frontend", "to": "AuthService", "label": "POST /login"},
+    {"from": "AuthService", "to": "Database", "label": "SELECT * FROM users"},
+    {"from": "Database", "to": "AuthService", "label": "User Record"},
+    {"from": "AuthService", "to": "AuthService", "label": "Verify Password"},
+    {"from": "AuthService", "to": "Frontend", "label": "200 OK (Token)"},
+    {"from": "Frontend", "to": "User", "label": "Redirect to Dashboard"},
+    {"from": "User", "to": "Frontend", "label": "View Dashboard"},
+    {"from": "Frontend", "to": "DataService", "label": "GET /stats"},
+    {"from": "DataService", "to": "Database", "label": "SELECT count(*) ..."},
+    {"from": "Database", "to": "DataService", "label": "Stats Data"},
+    {"from": "DataService", "to": "Frontend", "label": "200 OK (JSON)"},
+    {"from": "Frontend", "to": "User", "label": "Render Charts"}
+]

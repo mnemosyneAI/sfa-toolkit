@@ -117,9 +117,19 @@ def _strip_vtt_formatting(vtt_content: str) -> str:
 
 
 def _get_transcript_via_api(
-    video_id: str, language: str = "en", with_timestamps: bool = False
+    video_id: str,
+    language: str = "en",
+    with_timestamps: bool = False,
+    format: str = "lines",
 ) -> Dict[str, Any]:
-    """Try fetching transcript via youtube_transcript_api (>= 0.6.0)."""
+    """Try fetching transcript via youtube_transcript_api (>= 0.6.0).
+
+    Args:
+        video_id: YouTube video ID
+        language: Language code (default: "en")
+        with_timestamps: Include timestamps in output
+        format: Output format - "lines" (one per subtitle), "continuous" (space-joined), "paragraphs" (grouped by gaps)
+    """
     if not YOUTUBE_API_AVAILABLE:
         return {"success": False, "error": "youtube_transcript_api not installed"}
 
@@ -129,12 +139,14 @@ def _get_transcript_via_api(
         result = api.fetch(video_id, languages=(language, "en"))
 
         # Format output
-        full_text = []
+        lines = []
         formatted_entries = []
+        prev_end = 0
 
         for snippet in result.snippets:
             text = snippet.text.replace("\n", " ")
             start = snippet.start
+            duration = snippet.duration
 
             if with_timestamps:
                 minutes = int(start // 60)
@@ -144,17 +156,32 @@ def _get_transcript_via_api(
             else:
                 line = text
 
-            full_text.append(line)
+            # Track gap for paragraph detection (3+ second gap = new paragraph)
+            gap = start - prev_end
+            if format == "paragraphs" and gap > 3.0 and lines:
+                lines.append("")  # Empty line for paragraph break
+
+            lines.append(line)
+            prev_end = start + duration
+
             formatted_entries.append(
-                {"text": text, "start": start, "duration": snippet.duration}
+                {"text": text, "start": start, "duration": duration}
             )
+
+        # Join based on format
+        if format == "continuous":
+            final_text = " ".join(lines)
+        elif format == "paragraphs":
+            final_text = "\n".join(lines)
+        else:  # lines (default)
+            final_text = "\n".join(lines)
 
         return {
             "success": True,
             "method": "api",
             "language": result.language_code,
             "is_generated": result.is_generated,
-            "text": "\n".join(full_text) if with_timestamps else " ".join(full_text),
+            "text": final_text,
             "transcript": formatted_entries,
         }
 
@@ -244,14 +271,14 @@ def _is_youtube_url(url: str) -> bool:
 
 
 def _fetch_youtube_transcript(
-    url: str, language: str = "en", timestamps: bool = False
+    url: str, language: str = "en", timestamps: bool = False, format: str = "lines"
 ) -> Dict[str, Any]:
     """Fetch YouTube transcript with API -> yt-dlp fallback."""
     try:
         video_id = _extract_video_id(url)
 
         # 1. Try API
-        result = _get_transcript_via_api(video_id, language, timestamps)
+        result = _get_transcript_via_api(video_id, language, timestamps, format)
         if result["success"]:
             return result
 
@@ -503,7 +530,7 @@ if mcp:
 
     @mcp.tool()
     def youtube_transcript(
-        url: str, language: str = "en", timestamps: bool = False
+        url: str, language: str = "en", timestamps: bool = False, format: str = "lines"
     ) -> str:
         """
         Fetch YouTube transcript with hybrid extraction (API + yt-dlp fallback).
@@ -511,8 +538,9 @@ if mcp:
             url: YouTube URL or video ID
             language: Language code (default: en)
             timestamps: Include timestamps in output
+            format: Output format - "lines" (default, one per subtitle), "continuous" (space-joined), "paragraphs" (grouped by gaps)
         """
-        result = _fetch_youtube_transcript(url, language, timestamps)
+        result = _fetch_youtube_transcript(url, language, timestamps, format)
         if result["success"]:
             return result["text"]
         else:
@@ -549,6 +577,12 @@ def main():
         "--timestamps", action="store_true", help="Include timestamps"
     )
     yt_parser.add_argument(
+        "--format",
+        choices=["lines", "continuous", "paragraphs"],
+        default="lines",
+        help="Output format: lines (one per subtitle), continuous (space-joined), paragraphs (grouped by gaps)",
+    )
+    yt_parser.add_argument(
         "--json", action="store_true", help="Output full JSON result"
     )
 
@@ -572,7 +606,9 @@ def main():
                 print(f"Format Spec: https://github.com/baldsam/ymj-spec")
                 print(f"Tip: Use 'sfa_ymj.py' to manage this file.")
     elif args.command == "youtube":
-        result = _fetch_youtube_transcript(args.url, args.lang, args.timestamps)
+        result = _fetch_youtube_transcript(
+            args.url, args.lang, args.timestamps, args.format
+        )
         if args.json:
             print(json.dumps(result, indent=2))
         else:

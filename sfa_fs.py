@@ -260,7 +260,7 @@ def create(path: str, parents: bool = False) -> Tuple[bool, str, str]:
     _log(f"Before: exists={exists}, parent_exists={parent_exists}", level=2)
 
     if exists:
-        return (False, "", f"Path already exists: {path_obj}")
+        return (False, "", f"Path already exists: {path} (Resolved: {path_obj})")
 
     # DETERMINE COMMAND
     command, explanation = _determine_create_command(str(path_obj), parents)
@@ -309,7 +309,7 @@ def verify(path: str) -> Tuple[bool, str, str]:
             _log(f"Details: {details['ls_output']}", level=2)
         return (True, f"exists {type_found}", "")
     else:
-        return (False, "missing", f"Path does not exist: {path}")
+        return (False, "missing", f"Path does not exist: {path} (Resolved: {path_obj})")
 
 
 def list_path(path: str, mode: str = "tree") -> Tuple[bool, str, str]:
@@ -326,7 +326,7 @@ def list_path(path: str, mode: str = "tree") -> Tuple[bool, str, str]:
     exists, type_found = _check_exists(str(path_obj))
 
     if not exists:
-        return (False, "", f"Path does not exist: {path}")
+        return (False, "", f"Path does not exist: {path} (Resolved: {path_obj})")
 
     if type_found != "dir":
         return (False, "", f"Path is not a directory: {path}")
@@ -357,7 +357,7 @@ def delete(
     exists, type_before = _check_exists(str(path_obj))
 
     if not exists:
-        return (False, "", f"Path does not exist: {path}")
+        return (False, "", f"Path does not exist: {path} (Resolved: {path_obj})")
 
     _log(f"Before: exists={exists}, type={type_before}", level=2)
 
@@ -402,82 +402,62 @@ def delete(
 def move(source: str, destination: str, backup: bool = True) -> Tuple[bool, str, str]:
     """
     Move/rename file or directory with optional backup.
-    """
-    result = {
-        "operation": "move",
-        "source": source,
-        "destination": destination,
-        "success": False,
-        "timestamp": datetime.now().isoformat(),
-        "before": {},
-        "command": "",
-        "after": {},
-        "backup_path": None,
-        "error": None,
-    }
 
+    Returns: (success, stdout_data, error_message)
+    Action command: silent on success
+    """
     source_obj = Path(source).resolve()
     dest_obj = Path(destination).resolve()
 
-    result["resolved_source"] = str(source_obj)
-    result["resolved_destination"] = str(dest_obj)
+    _log(f"Moving {source} → {destination}", level=2)
+    _log(f"Resolved: {source_obj} → {dest_obj}", level=2)
 
     # Check source exists
     src_exists, src_type = _check_exists(str(source_obj))
     dest_exists, dest_type = _check_exists(str(dest_obj))
 
-    result["before"] = {
-        "source_exists": src_exists,
-        "source_type": src_type,
-        "dest_exists": dest_exists,
-        "dest_type": dest_type,
-    }
+    _log(
+        f"Before: src_exists={src_exists} (type={src_type}), dest_exists={dest_exists}",
+        level=2,
+    )
 
     if not src_exists:
-        result["error"] = f"Source does not exist: {source}"
-        return result
+        return (False, "", f"Source does not exist: {source} (Resolved: {source_obj})")
 
     # Backup destination if it exists and is a file
     if backup and dest_exists and dest_type == "file":
         backup_path = _backup_file(str(dest_obj))
-        result["backup_path"] = backup_path
         if not backup_path:
-            result["error"] = "Failed to create backup of destination"
-            return result
+            return (False, "", "Failed to create backup of destination")
+        _log(f"Backup: {backup_path}", level=1)
 
-    # Execute move
+    # Execute move (use original paths for Git Bash)
     command = f'mv "{source}" "{destination}"'
-    result["command"] = command
+    _log(f"Command: {command}", level=2)
 
     success, stdout, stderr, exit_code = _run_bash(command)
-    result["exit_code"] = exit_code
-    result["stdout"] = stdout
-    result["stderr"] = stderr
 
     if not success:
-        result["error"] = f"Command failed: {stderr}"
-        return result
+        return (False, "", f"Command failed: {stderr}")
 
     # Verify
     src_exists_after, _ = _check_exists(str(source_obj))
     dest_exists_after, dest_type_after = _check_exists(str(dest_obj))
 
-    result["after"] = {
-        "source_exists": src_exists_after,
-        "dest_exists": dest_exists_after,
-        "dest_type": dest_type_after,
-    }
+    _log(
+        f"After: src_exists={src_exists_after}, dest_exists={dest_exists_after}",
+        level=2,
+    )
 
     if src_exists_after:
-        result["error"] = "Source still exists after move"
-        return result
+        return (False, "", "Source still exists after move")
 
     if not dest_exists_after:
-        result["error"] = "Destination does not exist after move"
-        return result
+        return (False, "", "Destination does not exist after move")
 
-    result["success"] = True
-    return result
+    _log(f"Moved: {source} → {destination}", level=1)
+
+    return (True, "", "")
 
 
 def copy(
@@ -505,7 +485,7 @@ def copy(
     )
 
     if not src_exists:
-        return (False, "", f"Source does not exist: {source}")
+        return (False, "", f"Source does not exist: {source} (Resolved: {source_obj})")
 
     # Determine command (use original paths for Git Bash)
     if src_type == "dir" and recursive:
@@ -550,7 +530,7 @@ def tree(path: str, max_depth: Optional[int] = None) -> Tuple[bool, str, str]:
     exists, type_found = _check_exists(str(path_obj))
 
     if not exists:
-        return (False, "", f"Path does not exist: {path}")
+        return (False, "", f"Path does not exist: {path} (Resolved: {path_obj})")
 
     if type_found != "dir":
         return (False, "", f"Path is not a directory: {path}")
@@ -596,13 +576,10 @@ def find_files(
     _log(f"Finding files in {path}", level=2)
     if pattern:
         _log(f"Pattern: {pattern}", level=2)
-    if type_filter:
-        _log(f"Type filter: {type_filter}", level=2)
-
     exists, type_found = _check_exists(str(path_obj))
 
     if not exists:
-        return (False, "", f"Path does not exist: {path}")
+        return (False, "", f"Path does not exist: {path} (Resolved: {path_obj})")
 
     if type_found != "dir":
         return (False, "", f"Path is not a directory: {path}")
@@ -654,7 +631,7 @@ def char_replace(
     exists, type_found = _check_exists(str(path_obj))
 
     if not exists or type_found != "file":
-        return (False, "", "File does not exist or is not a file")
+        return (False, "", f"File does not exist or is not a file: {file_path} (Resolved: {path_obj})")
 
     # Backup
     if backup:
@@ -700,12 +677,10 @@ def line_replace(
     """
     path_obj = Path(file_path).resolve()
 
-    _log(f"Replacing line {line_num} in {file_path}", level=2)
-
     exists, type_found = _check_exists(str(path_obj))
 
     if not exists or type_found != "file":
-        return (False, "", "File does not exist or is not a file")
+        return (False, "", f"File does not exist or is not a file: {file_path} (Resolved: {path_obj})")
 
     if backup:
         backup_path = _backup_file(str(path_obj))
@@ -749,12 +724,10 @@ def line_insert(
     """
     path_obj = Path(file_path).resolve()
 
-    _log(f"Inserting line at position {line_num} in {file_path}", level=2)
-
     exists, type_found = _check_exists(str(path_obj))
 
     if not exists or type_found != "file":
-        return (False, "", "File does not exist or is not a file")
+        return (False, "", f"File does not exist or is not a file: {file_path} (Resolved: {path_obj})")
 
     if backup:
         backup_path = _backup_file(str(path_obj))
@@ -796,12 +769,10 @@ def line_delete(
     """
     path_obj = Path(file_path).resolve()
 
-    _log(f"Deleting line {line_num} from {file_path}", level=2)
-
     exists, type_found = _check_exists(str(path_obj))
 
     if not exists or type_found != "file":
-        return (False, "", "File does not exist or is not a file")
+        return (False, "", f"File does not exist or is not a file: {file_path} (Resolved: {path_obj})")
 
     if backup:
         backup_path = _backup_file(str(path_obj))
@@ -847,7 +818,7 @@ def line_append(
     exists, type_found = _check_exists(str(path_obj))
 
     if not exists or type_found != "file":
-        return (False, "", "File does not exist or is not a file")
+        return (False, "", f"File does not exist or is not a file: {file_path} (Resolved: {path_obj})")
 
     if backup:
         backup_path = _backup_file(str(path_obj))
@@ -882,7 +853,7 @@ def line_prepend(
     exists, type_found = _check_exists(str(path_obj))
 
     if not exists or type_found != "file":
-        return (False, "", "File does not exist or is not a file")
+        return (False, "", f"File does not exist or is not a file: {file_path} (Resolved: {path_obj})")
 
     if backup:
         backup_path = _backup_file(str(path_obj))
@@ -925,7 +896,7 @@ def block_replace(
     exists, type_found = _check_exists(str(path_obj))
 
     if not exists or type_found != "file":
-        return (False, "", "File does not exist or is not a file")
+        return (False, "", f"File does not exist or is not a file: {file_path} (Resolved: {path_obj})")
 
     if backup:
         backup_path = _backup_file(str(path_obj))
@@ -968,12 +939,10 @@ def read_imports(file_path: str) -> Tuple[bool, str, str]:
     """
     path_obj = Path(file_path).resolve()
 
-    _log(f"Extracting imports from {file_path}", level=2)
-
     exists, type_found = _check_exists(str(path_obj))
 
     if not exists or type_found != "file":
-        return (False, "", "File does not exist or is not a file")
+        return (False, "", f"File does not exist or is not a file: {file_path} (Resolved: {path_obj})")
 
     try:
         with open(path_obj, "r", encoding="utf-8") as f:
@@ -1004,12 +973,10 @@ def read_functions(file_path: str) -> Tuple[bool, str, str]:
     """
     path_obj = Path(file_path).resolve()
 
-    _log(f"Extracting functions from {file_path}", level=2)
-
     exists, type_found = _check_exists(str(path_obj))
 
     if not exists or type_found != "file":
-        return (False, "", "File does not exist or is not a file")
+        return (False, "", f"File does not exist or is not a file: {file_path} (Resolved: {path_obj})")
 
     try:
         with open(path_obj, "r", encoding="utf-8") as f:
@@ -1048,7 +1015,7 @@ def read_docstrings(file_path: str) -> Tuple[bool, str, str]:
     exists, type_found = _check_exists(str(path_obj))
 
     if not exists or type_found != "file":
-        return (False, "", "File does not exist or is not a file")
+        return (False, "", f"File does not exist or is not a file: {file_path} (Resolved: {path_obj})")
 
     try:
         with open(path_obj, "r", encoding="utf-8") as f:
@@ -1095,12 +1062,10 @@ def sort_lines(file_path: str, backup: bool = True) -> Tuple[bool, str, str]:
     """
     path_obj = Path(file_path).resolve()
 
-    _log(f"Sorting lines in {file_path}", level=2)
-
     exists, type_found = _check_exists(str(path_obj))
 
     if not exists or type_found != "file":
-        return (False, "", "File does not exist or is not a file")
+        return (False, "", f"File does not exist or is not a file: {file_path} (Resolved: {path_obj})")
 
     if backup:
         backup_path = _backup_file(str(path_obj))
@@ -1139,7 +1104,7 @@ def unique_lines(file_path: str, backup: bool = True) -> Tuple[bool, str, str]:
     exists, type_found = _check_exists(str(path_obj))
 
     if not exists or type_found != "file":
-        return (False, "", "File does not exist or is not a file")
+        return (False, "", f"File does not exist or is not a file: {file_path} (Resolved: {path_obj})")
 
     if backup:
         backup_path = _backup_file(str(path_obj))

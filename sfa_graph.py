@@ -6,6 +6,7 @@
 #     "onnxruntime-gpu>=1.18.0,<1.20.0",
 #     "fastembed-gpu",
 #     "numpy",
+#     "sqlite-utils",
 # ]
 #
 # [[tool.uv.index]]
@@ -859,6 +860,16 @@ def main():
     p_semantic.add_argument("path", help="Path to graph.tsv")
     p_semantic.add_argument("query", help="Natural language query")
     p_semantic.add_argument("--top", type=int, default=10, help="Number of results")
+    p_semantic.add_argument(
+        "--db-output",
+        metavar="DB_PATH",
+        help="Write results to SQLite database instead of stdout (silent mode)",
+    )
+    p_semantic.add_argument(
+        "--db-table",
+        default="graph_results",
+        help="Database table name (default: graph_results)",
+    )
 
     # Regenerate Semantics
     p_regen = subparsers.add_parser(
@@ -923,7 +934,30 @@ def main():
             )
         )
     elif args.command == "semantic-query":
-        print(_semantic_query_impl(args.path, args.query, top_k=args.top))
+        results_json = _semantic_query_impl(args.path, args.query, top_k=args.top)
+
+        if hasattr(args, "db_output") and args.db_output:
+            # Silent mode: write to database
+            import sqlite_utils
+
+            results = json.loads(results_json)
+
+            # Add metadata
+            enriched_results = []
+            for r in results:
+                r_copy = r.copy()
+                r_copy["query"] = args.query
+                r_copy["timestamp"] = __import__("datetime").datetime.now().isoformat()
+                enriched_results.append(r_copy)
+
+            # Insert into DB
+            db = sqlite_utils.Database(args.db_output)
+            table = db[args.db_table]
+            table.insert_all(enriched_results, alter=True, replace=True)
+            # Silent: no output
+        else:
+            # Normal mode: print to stdout
+            print(results_json)
     elif args.command == "regenerate-semantics":
         print(_regenerate_semantics_impl(args.path, force=args.force))
     elif args.command == "schema":

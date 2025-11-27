@@ -5,6 +5,7 @@
 #     "torch>=2.0.0",
 #     "fastembed-gpu",
 #     "numpy",
+#     "sqlite-utils",
 # ]
 #
 # [[tool.uv.index]]
@@ -461,6 +462,16 @@ Examples:
         default="readable",
         help="Output format (default: readable)",
     )
+    parser.add_argument(
+        "--db-output",
+        metavar="DB_PATH",
+        help="Write results to SQLite database instead of stdout (silent mode)",
+    )
+    parser.add_argument(
+        "--db-table",
+        default="search_results",
+        help="Database table name (default: search_results)",
+    )
 
     args = parser.parse_args()
 
@@ -469,9 +480,30 @@ Examples:
         query=args.query, root_path=args.path, sources=args.sources, top_k=args.top
     )
 
-    # Format and print
-    output = format_results(results, args.format)
-    print(output)
+    # Output results
+    if args.db_output:
+        # Silent mode: write to database
+        import sqlite_utils
+
+        db = sqlite_utils.Database(args.db_output)
+
+        # Add metadata to each result
+        enriched_results = []
+        for r in results:
+            r_copy = r.copy()
+            r_copy["query"] = args.query
+            r_copy["timestamp"] = __import__("datetime").datetime.now().isoformat()
+            enriched_results.append(r_copy)
+
+        # Insert into table (auto-creates/alters schema)
+        table = db[args.db_table]
+        table.insert_all(enriched_results, alter=True, replace=True)
+
+        # Silent: no output to stdout
+    else:
+        # Normal mode: print to stdout
+        output = format_results(results, args.format)
+        print(output)
 
 
 if __name__ == "__main__":

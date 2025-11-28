@@ -286,34 +286,39 @@ def _generate_embedding(text: str) -> List[float]:
 
 
 def _write_semantics_row(
-    semantics_path: Path, node_id: str, semantic_text: str, embedding: List[float]
+    semantics_path: Path, node_id: str, semantic_text: str, embedding: List[float],
+    archived_date: str = "ACTIVE"
 ) -> None:
     """Write or update a row in graph_semantics.tsv."""
     import csv
+
+    SEMANTICS_FIELDS = ["archived_date", "id", "semantic_text", "embedding"]
 
     # Read existing rows
     rows = []
     if semantics_path.exists():
         with open(semantics_path, "r", encoding="utf-8", newline="") as f:
             reader = csv.DictReader(f, delimiter="\t")
-            rows = [
-                r for r in reader if r["id"] != node_id
-            ]  # Remove existing entry for this ID
+            for r in reader:
+                if r["id"] != node_id:
+                    # Migrate old rows without archived_date
+                    if "archived_date" not in r or not r.get("archived_date"):
+                        r["archived_date"] = "ACTIVE"
+                    rows.append(r)
 
     # Add new row
     rows.append(
         {
+            "archived_date": archived_date,
             "id": node_id,
             "semantic_text": semantic_text,
-            "embedding": json.dumps(embedding),  # Store as JSON array
+            "embedding": json.dumps(embedding) if isinstance(embedding, list) else embedding,
         }
     )
 
     # Write all rows
     with open(semantics_path, "w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(
-            f, fieldnames=["id", "semantic_text", "embedding"], delimiter="\t"
-        )
+        writer = csv.DictWriter(f, fieldnames=SEMANTICS_FIELDS, delimiter="\t")
         writer.writeheader()
         writer.writerows(rows)
 
@@ -407,17 +412,21 @@ def _add_link_impl(
     perspective: str = "agent",
     domain: str = "general",
     weight: float = 1.0,
+    include_archived: bool = False,
 ) -> str:
     """Add a link (edge) between two nodes."""
     target = _normalize_path(path)
     rows = _read_graph(target)
 
     # Validate existence of source and target
-    active_ids = {r["id"] for r in rows if r.get("archived_date") == "ACTIVE"}
-    if source_id not in active_ids:
-        return f"Error: Source ID '{source_id}' not found or archived."
-    if target_id not in active_ids:
-        return f"Error: Target ID '{target_id}' not found or archived."
+    if include_archived:
+        valid_ids = {r["id"] for r in rows}
+    else:
+        valid_ids = {r["id"] for r in rows if r.get("archived_date") == "ACTIVE"}
+    if source_id not in valid_ids:
+        return f"Error: Source ID '{source_id}' not found" + (" or archived." if not include_archived else ".")
+    if target_id not in valid_ids:
+        return f"Error: Target ID '{target_id}' not found" + (" or archived." if not include_archived else ".")
 
     timestamp = _now_iso()
 
@@ -516,6 +525,100 @@ def _update_node_impl(
     return f"Updated {id}. Old version archived."
 
 
+def _archive_node_impl(path: str, id: str, reason: Optional[str] = None) -> str:
+    """Archive a node without creating a new version. For compaction/superseded entries."""
+    import csv
+
+    target = _normalize_path(path)
+    rows = _read_graph(target)
+
+    # Find active row
+    active_idx = -1
+    for i, r in enumerate(rows):
+        if r["id"] == id and r.get("archived_date") == "ACTIVE":
+            active_idx = i
+            break
+
+    if active_idx == -1:
+        return f"Error: No active node found with ID '{id}'"
+
+    # Archive the row (no new version created)
+    archive_timestamp = _now_iso()
+    rows[active_idx]["archived_date"] = archive_timestamp
+
+    # Optionally append reason to content
+    if reason:
+        old_content = rows[active_idx].get("content", "")
+        rows[active_idx]["content"] = f"{old_content} [ARCHIVED: {reason}]"
+
+    _write_graph(target, rows)
+
+    # SYNC: Also update graph_semantics.tsv
+    semantics_path = target.parent / "graph_semantics.tsv"
+    if semantics_path.exists():
+        SEMANTICS_FIELDS = ["archived_date", "id", "semantic_text", "embedding"]
+        sem_rows = []
+        with open(semantics_path, "r", encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f, delimiter="\t")
+            for r in reader:
+                # Migrate old rows without archived_date
+                if "archived_date" not in r or not r.get("archived_date"):
+                    r["archived_date"] = "ACTIVE"
+                # Update the archived entry
+                if r["id"] == id:
+                    r["archived_date"] = archive_timestamp
+                sem_rows.append(r)
+
+        with open(semantics_path, "w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=SEMANTICS_FIELDS, delimiter="\t")
+            writer.writeheader()
+            writer.writerows(sem_rows)
+
+    return f"Archived {id}. No replacement created."
+
+
+def _unarchive_node_impl(path: str, id: str) -> str:
+    """Restore an archived node to active status."""
+    import csv
+
+    target = _normalize_path(path)
+    rows = _read_graph(target)
+
+    # Find archived row
+    archived_idx = -1
+    for i, r in enumerate(rows):
+        if r["id"] == id and r.get("archived_date") != "ACTIVE":
+            archived_idx = i
+            break
+
+    if archived_idx == -1:
+        return f"Error: No archived node found with ID '{id}'"
+
+    # Unarchive the row
+    rows[archived_idx]["archived_date"] = "ACTIVE"
+
+    _write_graph(target, rows)
+
+    # SYNC: Also update graph_semantics.tsv
+    semantics_path = target.parent / "graph_semantics.tsv"
+    if semantics_path.exists():
+        SEMANTICS_FIELDS = ["archived_date", "id", "semantic_text", "embedding"]
+        sem_rows = []
+        with open(semantics_path, "r", encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f, delimiter="\t")
+            for r in reader:
+                if r["id"] == id:
+                    r["archived_date"] = "ACTIVE"
+                sem_rows.append(r)
+
+        with open(semantics_path, "w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=SEMANTICS_FIELDS, delimiter="\t")
+            writer.writeheader()
+            writer.writerows(sem_rows)
+
+    return f"Unarchived {id}. Entry is now active."
+
+
 def _query_graph_impl(
     path: str,
     stance: Optional[str] = None,
@@ -600,6 +703,11 @@ def _semantic_query_impl(path: str, query: str, top_k: int = 10) -> str:
     with open(semantics_path, "r", encoding="utf-8", newline="") as f:
         reader = csv.DictReader(f, delimiter="\t")
         for row in reader:
+            # Skip archived entries (filter early for efficiency)
+            archived = row.get("archived_date", "ACTIVE")
+            if archived != "ACTIVE":
+                continue
+
             node_id = row["id"]
             semantic_text = row["semantic_text"]
             embedding = json.loads(row["embedding"])
@@ -690,7 +798,7 @@ def _regenerate_semantics_impl(graph_path: str, force: bool = False) -> str:
     if force:
         with open(semantics_path, "w", encoding="utf-8", newline="") as f:
             writer = csv.writer(f, delimiter="\t")
-            writer.writerow(["id", "semantic_text", "embedding"])
+            writer.writerow(["archived_date", "id", "semantic_text", "embedding"])
 
     # Process rows and write
     processed = 0
@@ -704,8 +812,9 @@ def _regenerate_semantics_impl(graph_path: str, force: bool = False) -> str:
             # Generate embedding
             embedding = _generate_embedding(semantic_text)
 
-            # Write to semantics file
-            _write_semantics_row(semantics_path, row_id, semantic_text, embedding)
+            # Write to semantics file (ACTIVE since we only process active rows)
+            archived_date = row.get("archived_date", "ACTIVE")
+            _write_semantics_row(semantics_path, row_id, semantic_text, embedding, archived_date)
 
             processed += 1
             if processed % 10 == 0:
@@ -836,6 +945,7 @@ def main():
     p_link.add_argument("--perspective", default="agent")
     p_link.add_argument("--domain", default="general")
     p_link.add_argument("--weight", type=float, default=1.0)
+    p_link.add_argument("--include-archived", action="store_true", help="Allow linking to archived entries")
 
     # Update
     p_update = subparsers.add_parser("update", help="Update a node (archive & append)")
@@ -843,6 +953,17 @@ def main():
     p_update.add_argument("id", help="Node ID")
     p_update.add_argument("--content", help="New content")
     p_update.add_argument("--stance", help="New stance")
+
+    # Archive (pure archival, no replacement)
+    p_archive = subparsers.add_parser("archive", help="Archive a node (no replacement)")
+    p_archive.add_argument("path", help="Path to graph.tsv")
+    p_archive.add_argument("id", help="Node ID to archive")
+    p_archive.add_argument("--reason", help="Optional reason for archival")
+
+    # Unarchive (restore archived entry to active)
+    p_unarchive = subparsers.add_parser("unarchive", help="Restore an archived node to active")
+    p_unarchive.add_argument("path", help="Path to graph.tsv")
+    p_unarchive.add_argument("id", help="Node ID to unarchive")
 
     # Query
     p_query = subparsers.add_parser("query", help="Query the graph")
@@ -916,6 +1037,7 @@ def main():
                 perspective=args.perspective,
                 domain=args.domain,
                 weight=args.weight,
+                include_archived=getattr(args, "include_archived", False),
             )
         )
     elif args.command == "update":
@@ -924,6 +1046,10 @@ def main():
                 args.path, args.id, content=args.content, stance=args.stance
             )
         )
+    elif args.command == "archive":
+        print(_archive_node_impl(args.path, args.id, reason=args.reason))
+    elif args.command == "unarchive":
+        print(_unarchive_node_impl(args.path, args.id))
     elif args.command == "query":
         print(
             _query_graph_impl(

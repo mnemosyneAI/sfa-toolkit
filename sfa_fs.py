@@ -7,7 +7,7 @@
 # ///
 
 """
-SFA Filesystem Tool (sfa_fs.py) v2.1.0
+SFA Filesystem Tool (sfa_fs.py) v2.2.0
 Professional filesystem operations with Unix philosophy design.
 
 PHILOSOPHY:
@@ -16,11 +16,46 @@ PHILOSOPHY:
   EXIT:   0=success, 1=failure
 
 COMMANDS:
-  Filesystem: create, verify, list, delete, move, copy, tree, find
-  Content:    line-replace, line-insert, line-delete, line-append, line-prepend,
-              block-replace, char-replace
-  Analysis:   read-imports, read-functions, read-docstrings
-  Processing: sort, unique
+  Filesystem:
+    create <path>              Create directory (--parents for recursive)
+    verify <path>              Check path exists, return type
+    list <path>                List contents (--mode tree|detailed)
+    delete <path>              Delete with backup (-r for recursive)
+    move <src> <dst>           Move/rename
+    copy <src> <dst>           Copy (-r for recursive)
+    tree <path>                Tree view (--depth N)
+    find <path>                Find by pattern (--pattern "*.py")
+
+  Reading (replaces Read/Grep tools):
+    read <file>                Read with line numbers (--offset, --limit, --raw)
+    search <path> <pattern>    Regex search (-i case, -C context, --files-only, --count)
+    line-get <file> <range>    Get lines: 10, 10-20, 10-, -20
+
+  Content Manipulation:
+    line-replace <f> <n> <txt> Replace line N with text
+    line-insert <f> <n> <txt>  Insert before line N
+    line-delete <f> <n>        Delete line N
+    line-delete-range <f> <r>  Delete range: 10-20, 10-, -20
+    line-append <f> <txt>      Append to file
+    line-prepend <f> <txt>     Prepend to file
+    block-replace <f> <o> <n>  Replace old with new
+                               --unique: fail if >1 match (like Edit tool)
+                               --count:  count matches only (no modify)
+                               --preview: show diff before applying
+    char-replace <f> <o> <n>   Character-level replace
+
+  Analysis:
+    read-imports <file>        Extract import statements
+    read-functions <file>      Extract function signatures
+    read-docstrings <file>     Extract docstrings
+
+  Processing:
+    sort <file>                Sort lines
+    unique <file>              Remove duplicate lines
+
+  Not yet in CLI (functions exist, parsers pending):
+    char-replace               Character-level replace
+    extract-markdown           Extract markdown from .ymj
 
 VERBOSITY:
   (default) - Silent operation, data only
@@ -32,6 +67,11 @@ WORKFLOW:
 
 Ground truth always. No filtering. No performance.
 """
+
+# ARCHITECTURE:
+#   Layer 2 (Primitives): _run_bash, _check_exists, _backup_file, _resolve_path
+#   Layer 1 (Operations): read_file, search, block_replace, list_directory, ...
+#   Layer 0 (Interface):  CLI parsers (argparse), MCP tools (fastmcp)
 
 import asyncio
 import sys
@@ -609,6 +649,202 @@ def find_files(
     return (True, file_list, "")
 
 
+# --- Reading Commands ---
+
+
+def read_file(
+    file_path: str,
+    offset: int = 0,
+    limit: Optional[int] = None,
+    raw: bool = False,
+    encoding: str = "utf-8",
+) -> Tuple[bool, str, str]:
+    """Read file contents with line numbers."""
+    path_obj = Path(file_path).resolve()
+    _log(f"Reading {file_path}", level=2)
+
+    exists, type_found = _check_exists(str(path_obj))
+    if not exists:
+        return (False, "", f"File does not exist: {file_path}")
+    if type_found != "file":
+        return (False, "", f"Path is not a file: {file_path}")
+
+    try:
+        with open(path_obj, "r", encoding=encoding, errors="replace") as f:
+            lines = f.readlines()
+
+        total_lines = len(lines)
+        start_idx = offset
+        if start_idx >= total_lines:
+            return (True, "", "")
+
+        end_idx = total_lines if limit is None else min(start_idx + limit, total_lines)
+        selected_lines = lines[start_idx:end_idx]
+
+        if raw:
+            output = "".join(selected_lines)
+        else:
+            output_lines = []
+            for i, line in enumerate(selected_lines, start=start_idx + 1):
+                line_content = line.rstrip("\n")
+                output_lines.append(f"{i:>6}→{line_content}")
+            output = "\n".join(output_lines)
+
+        _log(f"Read {len(selected_lines)} lines", level=1)
+        return (True, output, "")
+    except Exception as e:
+        return (False, "", f"Read error: {str(e)}")
+
+
+def search(
+    path: str,
+    pattern: str,
+    before_context: int = 0,
+    after_context: int = 0,
+    context: int = 0,
+    count_only: bool = False,
+    files_only: bool = False,
+    ignore_case: bool = False,
+    recursive: bool = True,
+) -> Tuple[bool, str, str]:
+    """Search for regex pattern in file(s)."""
+    import re
+    path_obj = Path(path).resolve()
+    _log(f"Searching {path} for: {pattern}", level=2)
+
+    exists, type_found = _check_exists(str(path_obj))
+    if not exists:
+        return (False, "", f"Path does not exist: {path}")
+
+    try:
+        flags = re.IGNORECASE if ignore_case else 0
+        regex = re.compile(pattern, flags)
+    except re.error as e:
+        return (False, "", f"Invalid regex: {e}")
+
+    ctx_before = context if context > 0 else before_context
+    ctx_after = context if context > 0 else after_context
+
+    if type_found == "file":
+        files_to_search = [path_obj]
+    else:
+        files_to_search = list(path_obj.rglob("*") if recursive else path_obj.glob("*"))
+        files_to_search = [f for f in files_to_search if f.is_file()]
+
+    results = []
+    files_with_matches = set()
+    total_matches = 0
+
+    for fp in files_to_search:
+        try:
+            with open(fp, "r", encoding="utf-8", errors="replace") as f:
+                file_lines = f.readlines()
+        except:
+            continue
+
+        file_matches = [i for i, line in enumerate(file_lines) if regex.search(line)]
+        if not file_matches:
+            continue
+
+        total_matches += len(file_matches)
+        files_with_matches.add(fp)
+
+        if count_only:
+            results.append(f"{fp}:{len(file_matches)}")
+        elif files_only:
+            results.append(str(fp))
+        else:
+            shown = set()
+            for idx in file_matches:
+                for j in range(max(0, idx - ctx_before), min(len(file_lines), idx + ctx_after + 1)):
+                    if j not in shown:
+                        shown.add(j)
+                        marker = ":" if j == idx else "-"
+                        results.append(f"{fp}:{j+1}{marker}{file_lines[j].rstrip()}")
+
+    if files_only:
+        results = list(dict.fromkeys(results))
+
+    _log(f"Found {total_matches} matches in {len(files_with_matches)} files", level=1)
+    return (True, "\n".join(results), "")
+
+
+def _parse_line_range(range_str: str, total_lines: int):
+    """Parse line range: 10, 10-20, 10-, -20"""
+    range_str = range_str.strip()
+    try:
+        if "-" not in range_str:
+            n = int(range_str)
+            return (n, n)
+        parts = range_str.split("-", 1)
+        if parts[0] == "":
+            return (1, int(parts[1]))
+        elif parts[1] == "":
+            return (int(parts[0]), total_lines)
+        else:
+            start, end = int(parts[0]), int(parts[1])
+            if start < 1 or end < start:
+                return (None, None)
+            return (start, min(end, total_lines))
+    except ValueError:
+        return (None, None)
+
+
+def line_get(file_path: str, line_range: str) -> Tuple[bool, str, str]:
+    """Get specific line(s) from file."""
+    path_obj = Path(file_path).resolve()
+    exists, type_found = _check_exists(str(path_obj))
+    if not exists or type_found != "file":
+        return (False, "", f"Not a file: {file_path}")
+
+    try:
+        with open(path_obj, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+
+        start, end = _parse_line_range(line_range, len(lines))
+        if start is None:
+            return (False, "", f"Invalid range: {line_range}")
+        if start > len(lines):
+            return (False, "", f"Start {start} exceeds file length")
+
+        selected = lines[start - 1 : end]
+        output = "\n".join(f"{i:>6}→{line.rstrip()}" for i, line in enumerate(selected, start=start))
+        return (True, output, "")
+    except Exception as e:
+        return (False, "", str(e))
+
+
+def line_delete_range(file_path: str, line_range: str, backup: bool = True) -> Tuple[bool, str, str]:
+    """Delete range of lines from file."""
+    path_obj = Path(file_path).resolve()
+    exists, type_found = _check_exists(str(path_obj))
+    if not exists or type_found != "file":
+        return (False, "", f"Not a file: {file_path}")
+
+    if backup:
+        bp = _backup_file(str(path_obj))
+        if not bp:
+            return (False, "", "Backup failed")
+        _log(f"Backup: {bp}", level=1)
+
+    try:
+        with open(path_obj, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+
+        start, end = _parse_line_range(line_range, len(lines))
+        if start is None:
+            return (False, "", f"Invalid range: {line_range}")
+
+        del lines[start - 1 : end]
+        with open(path_obj, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+
+        _log(f"Deleted lines {line_range}", level=1)
+        return (True, "", "")
+    except Exception as e:
+        return (False, "", str(e))
+
+
 # --- Content Manipulation Commands ---
 
 
@@ -882,45 +1118,85 @@ def block_replace(
     old_block: str,
     new_block: str,
     backup: bool = True,
+    unique: bool = False,
+    count_only: bool = False,
+    preview: bool = False,
 ) -> Tuple[bool, str, str]:
     """
     Replace multi-line block of text.
 
+    Args:
+        file_path: Path to file
+        old_block: Block to find
+        new_block: Replacement block
+        backup: Create backup before modifying
+        unique: Fail if block appears more than once (like Edit tool)
+        count_only: Just count occurrences, don't modify
+        preview: Show diff of changes, don't apply
+
     Returns: (success, stdout_data, error_message)
-    Action command: silent on success
     """
     path_obj = Path(file_path).resolve()
 
-    _log(f"Replacing block in {file_path}", level=2)
+    _log(f"Block replace in {file_path}", level=2)
 
     exists, type_found = _check_exists(str(path_obj))
 
     if not exists or type_found != "file":
         return (False, "", f"File does not exist or is not a file: {file_path} (Resolved: {path_obj})")
 
-    if backup:
-        backup_path = _backup_file(str(path_obj))
-        if not backup_path:
-            return (False, "", "Failed to create backup")
-        _log(f"Backup: {backup_path}", level=1)
-
     try:
         with open(path_obj, "r", encoding="utf-8") as f:
-            content = f.read()
+            file_content = f.read()
 
-        replacements = content.count(old_block)
+        occurrences = file_content.count(old_block)
 
-        if replacements == 0:
+        _log(f"Found {occurrences} occurrence(s)", level=2)
+
+        # Count-only mode
+        if count_only:
+            return (True, f"{occurrences}", "")
+
+        # Validation
+        if occurrences == 0:
             return (False, "", "Block not found in file")
 
-        _log(f"Found {replacements} occurrence(s) of block", level=2)
+        if unique and occurrences > 1:
+            return (False, "", f"Block not unique ({occurrences} occurrences). Use --count to see.")
 
-        new_content = content.replace(old_block, new_block)
+        # Preview mode
+        if preview:
+            pos = file_content.find(old_block)
+            line_num = file_content[:pos].count('\n') + 1
+
+            preview_lines = [
+                f"--- {file_path}",
+                f"+++ {file_path} (modified)",
+                f"@@ line {line_num} @@",
+            ]
+            for line in old_block.split('\n'):
+                preview_lines.append(f"-{line}")
+            for line in new_block.split('\n'):
+                preview_lines.append(f"+{line}")
+
+            if occurrences > 1 and not unique:
+                preview_lines.append(f"\n({occurrences} total occurrences will be replaced)")
+
+            return (True, '\n'.join(preview_lines), "")
+
+        # Actual replacement
+        if backup:
+            backup_path = _backup_file(str(path_obj))
+            if not backup_path:
+                return (False, "", "Failed to create backup")
+            _log(f"Backup: {backup_path}", level=1)
+
+        new_content = file_content.replace(old_block, new_block)
 
         with open(path_obj, "w", encoding="utf-8") as f:
             f.write(new_content)
 
-        _log(f"Replaced {replacements} block(s)", level=1)
+        _log(f"Replaced {occurrences} block(s)", level=1)
         return (True, "", "")
 
     except Exception as e:
@@ -1377,6 +1653,34 @@ def cli_main():
         "--type", choices=["f", "d"], help="f=files, d=directories"
     )
 
+    # Reading commands
+    read_parser = subparsers.add_parser("read", help="Read file contents with line numbers")
+    read_parser.add_argument("file", help="File to read")
+    read_parser.add_argument("--offset", type=int, default=0, help="Start from line N (1-indexed)")
+    read_parser.add_argument("--limit", type=int, help="Max lines to read")
+    read_parser.add_argument("--raw", action="store_true", help="No line numbers")
+    read_parser.add_argument("--encoding", default="utf-8", help="File encoding")
+
+    search_parser = subparsers.add_parser("search", help="Search for regex pattern in files")
+    search_parser.add_argument("path", help="File or directory to search")
+    search_parser.add_argument("pattern", help="Regex pattern")
+    search_parser.add_argument("-A", "--after", type=int, default=0, help="Lines after match")
+    search_parser.add_argument("-B", "--before", type=int, default=0, help="Lines before match")
+    search_parser.add_argument("-C", "--context", type=int, default=0, help="Lines before and after")
+    search_parser.add_argument("--count", action="store_true", help="Just show match counts")
+    search_parser.add_argument("--files-only", action="store_true", help="Just show file paths")
+    search_parser.add_argument("-i", "--ignore-case", action="store_true", help="Case insensitive")
+    search_parser.add_argument("--no-recursive", action="store_true", help="Don't recurse directories")
+
+    line_get_parser = subparsers.add_parser("line-get", help="Get specific line(s)")
+    line_get_parser.add_argument("file", help="File path")
+    line_get_parser.add_argument("range", help="Line range (10, 10-20, 10-, -20)")
+
+    line_delete_range_parser = subparsers.add_parser("line-delete-range", help="Delete range of lines")
+    line_delete_range_parser.add_argument("file", help="File path")
+    line_delete_range_parser.add_argument("range", help="Line range (10, 10-20, 10-, -20)")
+    line_delete_range_parser.add_argument("--no-backup", action="store_true", help="Skip backup")
+
     # Content manipulation commands
     line_replace_parser = subparsers.add_parser(
         "line-replace", help="Replace entire line"
@@ -1430,10 +1734,11 @@ def cli_main():
     )
     block_replace_parser.add_argument("file", help="File path")
     block_replace_parser.add_argument("old_block", help="Block to replace")
-    block_replace_parser.add_argument("new_block", help="Replacement block")
-    block_replace_parser.add_argument(
-        "--no-backup", action="store_true", help="Skip backup"
-    )
+    block_replace_parser.add_argument("new_block", nargs="?", default="", help="Replacement block")
+    block_replace_parser.add_argument("--no-backup", action="store_true", help="Skip backup")
+    block_replace_parser.add_argument("--unique", action="store_true", help="Fail if >1 match")
+    block_replace_parser.add_argument("--count", action="store_true", help="Just count, don't replace")
+    block_replace_parser.add_argument("--preview", action="store_true", help="Show diff, don't apply")
 
     # Structure-aware reading
     read_imports_parser = subparsers.add_parser(
@@ -1488,6 +1793,17 @@ def cli_main():
         result = tree(args.path, args.depth)
     elif args.command == "find":
         result = find_files(args.path, args.pattern, args.type)
+    elif args.command == "read":
+        result = read_file(args.file, args.offset, args.limit, args.raw, args.encoding)
+    elif args.command == "search":
+        result = search(
+            args.path, args.pattern, args.before, args.after, args.context,
+            args.count, args.files_only, args.ignore_case, not args.no_recursive
+        )
+    elif args.command == "line-get":
+        result = line_get(args.file, args.range)
+    elif args.command == "line-delete-range":
+        result = line_delete_range(args.file, args.range, not args.no_backup)
     elif args.command == "line-replace":
         result = line_replace(
             args.file, args.line_num, args.content, not args.no_backup
@@ -1502,7 +1818,11 @@ def cli_main():
         result = line_prepend(args.file, args.content, not args.no_backup)
     elif args.command == "block-replace":
         result = block_replace(
-            args.file, args.old_block, args.new_block, not args.no_backup
+            args.file, args.old_block, args.new_block,
+            backup=not args.no_backup,
+            unique=args.unique,
+            count_only=args.count,
+            preview=args.preview
         )
     elif args.command == "read-imports":
         result = read_imports(args.file)

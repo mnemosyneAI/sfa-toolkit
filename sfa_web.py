@@ -1,3 +1,4 @@
+#!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.11,<3.14"
 # dependencies = [
@@ -390,6 +391,111 @@ def _fetch_youtube_transcript(
         return {"success": False, "error": str(e)}
 
 
+def _get_video_info(video_id: str, yt_dlp_path: str = "yt-dlp") -> Dict[str, Any]:
+    """Get YouTube video metadata using yt-dlp."""
+    url = f"https://www.youtube.com/watch?v={video_id}"
+
+    cmd = [
+        yt_dlp_path,
+        "--dump-json",
+        "--no-download",
+        "--no-warnings",
+        url,
+    ]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=30, text=True)
+        if result.returncode != 0:
+            return {"success": False, "error": f"yt-dlp failed: {result.stderr}"}
+
+        data = json.loads(result.stdout)
+
+        # Extract relevant fields (all but thumbnail)
+        info = {
+            "success": True,
+            "video_id": video_id,
+            "title": data.get("title"),
+            "description": data.get("description"),
+            "channel": data.get("channel"),
+            "channel_id": data.get("channel_id"),
+            "upload_date": data.get("upload_date"),  # YYYYMMDD format
+            "duration": data.get("duration"),  # seconds
+            "duration_string": data.get("duration_string"),
+            "view_count": data.get("view_count"),
+            "like_count": data.get("like_count"),
+            "tags": data.get("tags", []),
+            "categories": data.get("categories", []),
+        }
+
+        return info
+
+    except subprocess.TimeoutExpired:
+        return {"success": False, "error": "yt-dlp timed out"}
+    except FileNotFoundError:
+        return {"success": False, "error": "yt-dlp executable not found in PATH"}
+    except json.JSONDecodeError as e:
+        return {"success": False, "error": f"Failed to parse yt-dlp output: {e}"}
+    except Exception as e:
+        return {"success": False, "error": f"Video info error: {str(e)}"}
+
+
+def _download_video(
+    video_id: str,
+    output_dir: str = ".output/videos",
+    format: str = "best",
+    yt_dlp_path: str = "yt-dlp",
+) -> Dict[str, Any]:
+    """Download YouTube video using yt-dlp."""
+    url = f"https://www.youtube.com/watch?v={video_id}"
+
+    # Ensure output directory exists
+    out_path = Path(output_dir)
+    out_path.mkdir(parents=True, exist_ok=True)
+
+    output_template = str(out_path / "%(title)s.%(ext)s")
+
+    cmd = [
+        yt_dlp_path,
+        "-f", format,
+        "-o", output_template,
+        "--no-warnings",
+        "--newline",  # Progress on new lines
+        url,
+    ]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=600, text=True)
+
+        if result.returncode != 0:
+            return {"success": False, "error": f"yt-dlp failed: {result.stderr}"}
+
+        # Find the downloaded file
+        # yt-dlp prints "Destination: filename" or "[download] filename has already been downloaded"
+        lines = result.stdout.strip().split("\n")
+        filename = None
+        for line in lines:
+            if "Destination:" in line:
+                filename = line.split("Destination:")[-1].strip()
+            elif "has already been downloaded" in line:
+                # Extract filename from "[download] filename has already been downloaded"
+                filename = line.replace("[download]", "").replace("has already been downloaded", "").strip()
+
+        return {
+            "success": True,
+            "video_id": video_id,
+            "output_dir": str(out_path.resolve()),
+            "filename": filename,
+            "stdout": result.stdout,
+        }
+
+    except subprocess.TimeoutExpired:
+        return {"success": False, "error": "Download timed out (10 min limit)"}
+    except FileNotFoundError:
+        return {"success": False, "error": "yt-dlp executable not found in PATH"}
+    except Exception as e:
+        return {"success": False, "error": f"Download error: {str(e)}"}
+
+
 # === WEB SEARCH & FETCH ===
 
 
@@ -669,59 +775,96 @@ def main():
     parser = argparse.ArgumentParser(description="SFA Web - Research & Retrieval")
     subparsers = parser.add_subparsers(dest="command")
 
-    # search
-    search_parser = subparsers.add_parser("search", help="Search the web (DuckDuckGo)")
+    # search (Brave - default) - alias: s
+    search_parser = subparsers.add_parser(
+        "search", aliases=["s"], help="Search the web (Brave, default)"
+    )
     search_parser.add_argument("query", help="Search query")
     search_parser.add_argument("--count", type=int, default=10, help="Max results")
+    search_parser.add_argument("--key", help="Brave API Key (overrides env var)")
 
-    # brave-search
-    brave_parser = subparsers.add_parser("brave-search", help="Search the web (Brave)")
-    brave_parser.add_argument("query", help="Search query")
-    brave_parser.add_argument("--count", type=int, default=10, help="Max results")
-    brave_parser.add_argument("--key", help="Brave API Key (overrides env var)")
+    # ddg (DuckDuckGo - alternate) - alias: sddg
+    ddg_parser = subparsers.add_parser(
+        "ddg", aliases=["sddg"], help="Search the web (DuckDuckGo)"
+    )
+    ddg_parser.add_argument("query", help="Search query")
+    ddg_parser.add_argument("--count", type=int, default=10, help="Max results")
 
-    # fetch
-    fetch_parser = subparsers.add_parser("fetch", help="Fetch webpage as Markdown")
+    # fetch - alias: f
+    fetch_parser = subparsers.add_parser(
+        "fetch", aliases=["f"], help="Fetch webpage as Markdown"
+    )
     fetch_parser.add_argument("url", help="URL to fetch")
     fetch_parser.add_argument("--save-to", "-s", help="Directory to save as .ymj")
 
-    # youtube
-    yt_parser = subparsers.add_parser("youtube", help="Fetch YouTube transcript")
-    yt_parser.add_argument("url", help="YouTube URL or video ID")
-    yt_parser.add_argument("--lang", default="en", help="Language code (default: en)")
-    yt_parser.add_argument(
+    # transcript (YouTube transcript) - alias: yt
+    transcript_parser = subparsers.add_parser(
+        "transcript", aliases=["yt"], help="Fetch YouTube transcript"
+    )
+    transcript_parser.add_argument("url", help="YouTube URL or video ID")
+    transcript_parser.add_argument(
+        "--lang", default="en", help="Language code (default: en)"
+    )
+    transcript_parser.add_argument(
         "--timestamps", action="store_true", help="Include timestamps"
     )
-    yt_parser.add_argument(
+    transcript_parser.add_argument(
         "--format",
         choices=["lines", "continuous", "paragraphs"],
         default="lines",
         help="Output format: lines (one per subtitle), continuous (space-joined), paragraphs (grouped by gaps)",
     )
-    yt_parser.add_argument(
+    transcript_parser.add_argument(
         "--http-proxy", help="HTTP proxy URL (or set HTTP_PROXY env var)"
     )
-    yt_parser.add_argument(
+    transcript_parser.add_argument(
         "--https-proxy", help="HTTPS proxy URL (or set HTTPS_PROXY env var)"
     )
-    yt_parser.add_argument("--cursor", help="Pagination cursor from previous response")
-    yt_parser.add_argument(
+    transcript_parser.add_argument(
+        "--cursor", help="Pagination cursor from previous response"
+    )
+    transcript_parser.add_argument(
         "--response-limit",
         type=int,
         default=50000,
         help="Max characters per response for pagination (default: 50000)",
     )
-    yt_parser.add_argument(
+    transcript_parser.add_argument(
         "--json", action="store_true", help="Output full JSON result"
+    )
+
+    # video-info (YouTube metadata) - alias: yti
+    info_parser = subparsers.add_parser(
+        "video-info", aliases=["yti"], help="Get YouTube video metadata"
+    )
+    info_parser.add_argument("url", help="YouTube URL or video ID")
+    info_parser.add_argument(
+        "--json", action="store_true", help="Output as JSON (default: formatted text)"
+    )
+
+    # video-download (YouTube download) - alias: ytd
+    dl_parser = subparsers.add_parser(
+        "video-download", aliases=["ytd"], help="Download YouTube video"
+    )
+    dl_parser.add_argument("url", help="YouTube URL or video ID")
+    dl_parser.add_argument(
+        "--output", "-o", default=".output/videos", help="Output directory (default: .output/videos)"
+    )
+    dl_parser.add_argument(
+        "--format", "-f", default="best", help="Video format (default: best)"
     )
 
     args = parser.parse_args()
 
-    if args.command == "search":
+    # Handle commands (check both canonical and alias names)
+    if args.command in ("search", "s"):
+        results = _brave_search(args.query, args.count, getattr(args, "key", None))
+        print(json.dumps(results, indent=2))
+
+    elif args.command in ("ddg", "sddg"):
         print(json.dumps(_duckduckgo_search(args.query, args.count), indent=2))
-    elif args.command == "brave-search":
-        print(json.dumps(_brave_search(args.query, args.count, args.key), indent=2))
-    elif args.command == "fetch":
+
+    elif args.command in ("fetch", "f"):
         res = _fetch_page_content(args.url)
         if "error" in res:
             print(f"Error: {res['error']}")
@@ -734,7 +877,8 @@ def main():
                 print(f"\nSaved to: {saved}")
                 print(f"Format Spec: https://github.com/baldsam/ymj-spec")
                 print(f"Tip: Use 'sfa_ymj.py' to manage this file.")
-    elif args.command == "youtube":
+
+    elif args.command in ("transcript", "yt"):
         result = _fetch_youtube_transcript(
             args.url,
             args.lang,
@@ -758,6 +902,55 @@ def main():
             else:
                 print(f"Error: {result.get('error')}", file=sys.stderr)
                 sys.exit(1)
+
+    elif args.command in ("video-info", "yti"):
+        try:
+            video_id = _extract_video_id(args.url)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+
+        result = _get_video_info(video_id)
+        if not result["success"]:
+            print(f"Error: {result['error']}", file=sys.stderr)
+            sys.exit(1)
+
+        if args.json:
+            print(json.dumps(result, indent=2))
+        else:
+            # Formatted text output
+            print(f"Title: {result['title']}")
+            print(f"Channel: {result['channel']}")
+            print(f"Duration: {result['duration_string']}")
+            print(f"Views: {result['view_count']:,}" if result['view_count'] else "Views: N/A")
+            print(f"Likes: {result['like_count']:,}" if result['like_count'] else "Likes: N/A")
+            if result['upload_date']:
+                d = result['upload_date']
+                print(f"Uploaded: {d[:4]}-{d[4:6]}-{d[6:]}")
+            if result['tags']:
+                print(f"Tags: {', '.join(result['tags'][:10])}")
+            if result['categories']:
+                print(f"Categories: {', '.join(result['categories'])}")
+            print(f"\n--- Description ---\n{result['description']}")
+
+    elif args.command in ("video-download", "ytd"):
+        try:
+            video_id = _extract_video_id(args.url)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+
+        print(f"Downloading video {video_id}...", file=sys.stderr)
+        result = _download_video(video_id, args.output, args.format)
+
+        if not result["success"]:
+            print(f"Error: {result['error']}", file=sys.stderr)
+            sys.exit(1)
+
+        print(f"Downloaded to: {result['output_dir']}")
+        if result['filename']:
+            print(f"Filename: {result['filename']}")
+
     else:
         if mcp:
             mcp.run()

@@ -593,6 +593,61 @@ def _brave_search(
         return [{"error": f"Brave Search failed: {str(e)}"}]
 
 
+def _x_search(query: str, max_results: int = 10) -> List[Dict[str, Any]]:
+    """
+    Search X/Twitter using direct xAI API with live search.
+    Returns real-time posts with verified citations.
+    """
+    api_key = os.environ.get("XAI_API_KEY")
+    if not api_key:
+        return [{"error": "Missing XAI_API_KEY for X search"}]
+    
+    prompt = f"""Search X for the latest posts about: {query}
+
+Find up to {max_results} relevant posts from the last 24-48 hours.
+For each post, provide:
+- author: the @username
+- content: the full post text
+- time: the timestamp
+- url: link to the post
+
+Format as a clear list."""
+
+    try:
+        data = json.dumps({
+            "model": "grok-4-1-fast-non-reasoning",
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 2000,
+            "search_parameters": {
+                "mode": "auto",
+                "sources": [{"type": "x"}]
+            }
+        }).encode("utf-8")
+        
+        req = urllib.request.Request(
+            "https://api.x.ai/v1/chat/completions",
+            data=data,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "User-Agent": "Mozilla/5.0 (compatible; SyneBot/1.0)"
+            }
+        )
+        
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+            content = result["choices"][0]["message"]["content"]
+            citations = result.get("citations", [])
+            
+            return {
+                "summary": content,
+                "citations": citations,
+                "sources_used": result.get("usage", {}).get("num_sources_used", 0)
+            }
+    except Exception as e:
+        return [{"error": f"X Search failed: {str(e)}"}]
+
+
 def _fetch_page_content(url: str) -> Dict[str, Any]:
     """
     Fetch and convert page content to Markdown.
@@ -624,6 +679,84 @@ def _fetch_page_content(url: str) -> Dict[str, Any]:
         return {"url": url, "title": title.strip(), "content": markdown.strip()}
     except Exception as e:
         return {"error": f"Fetch failed: {str(e)}"}
+
+
+def _gated_fetch(url: str, context: str, threshold: int = 7) -> Dict[str, Any]:
+    """
+    Fetch URL and evaluate relevance using Grok.
+    Returns content if score > threshold, otherwise just the score.
+    """
+    api_key = os.environ.get("XAI_API_KEY")
+    if not api_key:
+        return {"error": "Missing XAI_API_KEY for gated fetch"}
+    
+    # First fetch the raw content
+    raw = _fetch_page_content(url)
+    if "error" in raw:
+        return raw
+    
+    # Truncate content if too long (keep it reasonable for eval)
+    content = raw["content"][:8000] if len(raw["content"]) > 8000 else raw["content"]
+    
+    prompt = f"""Evaluate this webpage content for relevance to the following context.
+
+CONTEXT I CARE ABOUT: {context}
+
+WEBPAGE TITLE: {raw["title"]}
+WEBPAGE CONTENT:
+{content}
+
+Score the relevance from 1-10 where:
+- 1-3: Not relevant
+- 4-6: Tangentially related
+- 7-10: Directly relevant and valuable
+
+Respond with ONLY a JSON object in this exact format:
+{{"score": <number>, "content": "<markdown content if score > {threshold}, otherwise empty string>"}}
+
+If score > {threshold}, include the key content as clean markdown. If score <= {threshold}, set content to empty string."""
+
+    try:
+        data = json.dumps({
+            "model": "grok-4-1-fast-non-reasoning",
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 4000
+        }).encode("utf-8")
+        
+        req = urllib.request.Request(
+            "https://api.x.ai/v1/chat/completions",
+            data=data,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "User-Agent": "Mozilla/5.0 (compatible; SyneBot/1.0)"
+            }
+        )
+        
+        with urllib.request.urlopen(req, timeout=90) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+            response_text = result["choices"][0]["message"]["content"].strip()
+            
+            # Parse JSON response
+            try:
+                # Handle markdown code blocks
+                if response_text.startswith("```"):
+                    response_text = response_text.split("```")[1]
+                    if response_text.startswith("json"):
+                        response_text = response_text[4:].strip()
+                    response_text = response_text.strip()
+                
+                parsed = json.loads(response_text)
+                return {
+                    "url": url,
+                    "title": raw["title"],
+                    "score": parsed.get("score", 0),
+                    "content": parsed.get("content", "") if parsed.get("score", 0) > threshold else ""
+                }
+            except json.JSONDecodeError:
+                return {"error": f"Failed to parse Grok response: {response_text[:200]}"}
+    except Exception as e:
+        return {"error": f"Gated fetch failed: {str(e)}"}
 
 
 def _save_as_ymj(url: str, title: str, content: str, save_dir: str) -> str:
@@ -790,12 +923,20 @@ def main():
     ddg_parser.add_argument("query", help="Search query")
     ddg_parser.add_argument("--count", type=int, default=10, help="Max results")
 
+    # x-search (X/Twitter via Grok) - alias: xs
+    x_parser = subparsers.add_parser(
+        "x-search", aliases=["xs"], help="Search X/Twitter (via Grok)"
+    )
+    x_parser.add_argument("query", help="Search query")
+    x_parser.add_argument("--count", type=int, default=10, help="Max results")
+
     # fetch - alias: f
     fetch_parser = subparsers.add_parser(
         "fetch", aliases=["f"], help="Fetch webpage as Markdown"
     )
     fetch_parser.add_argument("url", help="URL to fetch")
     fetch_parser.add_argument("--save-to", "-s", help="Directory to save as .ymj")
+    fetch_parser.add_argument("--eval", "-e", help="Evaluate relevance to this context (score 1-10, content if >7)")
 
     # transcript (YouTube transcript) - alias: yt
     transcript_parser = subparsers.add_parser(
@@ -864,19 +1005,31 @@ def main():
     elif args.command in ("ddg", "sddg"):
         print(json.dumps(_duckduckgo_search(args.query, args.count), indent=2))
 
+    elif args.command in ("x-search", "xs"):
+        print(json.dumps(_x_search(args.query, args.count), indent=2))
+
     elif args.command in ("fetch", "f"):
-        res = _fetch_page_content(args.url)
-        if "error" in res:
-            print(f"Error: {res['error']}")
+        if getattr(args, 'eval', None):
+            res = _gated_fetch(args.url, args.eval)
+            if "error" in res:
+                print(f"Error: {res['error']}")
+            elif res.get("content"):
+                print(f"# {res['title']} [Score: {res['score']}]\n\n{res['content']}")
+            else:
+                print(json.dumps({"score": res.get("score", 0)}))
         else:
-            print(f"# {res['title']}\n\n{res['content']}")
-            if args.save_to:
-                saved = _save_as_ymj(
-                    args.url, res["title"], res["content"], args.save_to
-                )
-                print(f"\nSaved to: {saved}")
-                print(f"Format Spec: https://github.com/baldsam/ymj-spec")
-                print(f"Tip: Use 'sfa_ymj.py' to manage this file.")
+            res = _fetch_page_content(args.url)
+            if "error" in res:
+                print(f"Error: {res['error']}")
+            else:
+                print(f"# {res['title']}\n\n{res['content']}")
+                if args.save_to:
+                    saved = _save_as_ymj(
+                        args.url, res["title"], res["content"], args.save_to
+                    )
+                    print(f"\nSaved to: {saved}")
+                    print(f"Format Spec: https://github.com/baldsam/ymj-spec")
+                    print(f"Tip: Use 'sfa_ymj.py' to manage this file.")
 
     elif args.command in ("transcript", "yt"):
         result = _fetch_youtube_transcript(

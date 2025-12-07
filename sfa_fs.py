@@ -696,6 +696,78 @@ def read_file(
         return (False, "", f"Read error: {str(e)}")
 
 
+def read_marked_section(
+    file_path: str,
+    start_marker: str,
+    end_marker: Optional[str] = None,
+    include_markers: bool = True,
+    encoding: str = "utf-8",
+) -> Tuple[bool, str, str]:
+    """Read content between markers in a file.
+    
+    Args:
+        file_path: Path to file
+        start_marker: Text that marks the start of section
+        end_marker: Text that marks the end (if None, read to EOF)
+        include_markers: Whether to include the marker lines in output
+        encoding: File encoding
+    
+    Returns:
+        Tuple of (success, content, error_message)
+    """
+    path_obj = Path(file_path).resolve()
+    _log(f"Reading marked section from {file_path}", level=2)
+    
+    exists, type_found = _check_exists(str(path_obj))
+    if not exists:
+        return (False, "", f"File does not exist: {file_path}")
+    if type_found != "file":
+        return (False, "", f"Path is not a file: {file_path}")
+    
+    try:
+        with open(path_obj, "r", encoding=encoding, errors="replace") as f:
+            lines = f.readlines()
+        
+        # Find start marker
+        start_idx = None
+        for i, line in enumerate(lines):
+            if start_marker in line:
+                start_idx = i
+                break
+        
+        if start_idx is None:
+            return (False, "", f"Start marker not found: {start_marker}")
+        
+        # Find end marker
+        end_idx = len(lines)
+        if end_marker:
+            for i, line in enumerate(lines[start_idx + 1:], start=start_idx + 1):
+                if end_marker in line:
+                    end_idx = i + 1  # Include the end marker line
+                    break
+            else:
+                return (False, "", f"End marker not found: {end_marker}")
+        
+        # Extract section
+        if include_markers:
+            selected = lines[start_idx:end_idx]
+        else:
+            selected = lines[start_idx + 1:end_idx - 1] if end_marker else lines[start_idx + 1:]
+        
+        output_lines = []
+        line_num = start_idx + 1 if include_markers else start_idx + 2
+        for line in selected:
+            line_content = line.rstrip("\n")
+            output_lines.append(f"{line_num:>6}→{line_content}")
+            line_num += 1
+        
+        output = "\n".join(output_lines)
+        _log(f"Read {len(selected)} lines from marked section", level=1)
+        return (True, output, "")
+    except Exception as e:
+        return (False, "", f"Read error: {str(e)}")
+
+
 def write_file(
     file_path: str,
     file_content: str,
@@ -1786,6 +1858,13 @@ def cli_main():
     read_parser.add_argument("--encoding", default="utf-8", help="File encoding")
     read_parser.add_argument("--force", "-f", action="store_true", help="Force read of large files (>500 lines)")
 
+    rms_parser = subparsers.add_parser("read-marked-section", aliases=["rms"], help="Read content between markers")
+    rms_parser.add_argument("file", help="File to read")
+    rms_parser.add_argument("start_marker", help="Text marking section start")
+    rms_parser.add_argument("end_marker", nargs="?", help="Text marking section end (optional, reads to EOF if omitted)")
+    rms_parser.add_argument("--no-markers", action="store_true", help="Exclude marker lines from output")
+
+
     search_parser = subparsers.add_parser("search", aliases=["s"], help="Search for regex pattern in files")
     search_parser.add_argument("path", help="File or directory to search")
     search_parser.add_argument("pattern", help="Regex pattern")
@@ -1960,6 +2039,8 @@ def cli_main():
         result = line_get(args.file, args.range)
     elif args.command in ("line-delete-range", "ldr"):
         result = line_delete_range(args.file, args.range, not args.no_backup)
+    elif args.command in ("read-marked-section", "rms"):
+        result = read_marked_section(args.file, args.start_marker, args.end_marker, not args.no_markers)
     elif args.command in ("write", "w"):
         content = args.content
         # Support @file syntax to read content from file

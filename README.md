@@ -27,17 +27,15 @@ Tools function in three modes:
 2. **MCP Server:** For AI agent use via Model Context Protocol
 3. **Code Execution:** Import tools as libraries for complex workflows
 
-## Serverless RAG Ecosystem
+## Memory & Knowledge Systems
 
-Fully local, serverless RAG system powered by the [YMJ Format](https://github.com/baldsam/ymj-spec).
+For graph-based knowledge and semantic search, see the dedicated repositories:
 
-- **No Vector DB Required:** Embeddings stored in file footer
-- **Zero Config:** Uses fastembed with local models
+- **[mnemosyne-memory](https://github.com/mnemosyneAI/mnemosyne-memory)** - Complete memory system with graph + unified search
+- **[graph-spec](https://github.com/mnemosyneAI/graph-spec)** - TSV knowledge graph specification
+- **[ymj-spec](https://github.com/mnemosyneAI/ymj-spec)** - YMJ document format specification
 
-### Workflow
-1. **Capture:** `sfa_web.py fetch ... --save-to ./memory`
-2. **Manage:** `sfa_ymj.py migrate ./docs`
-3. **Search:** `sfa_find.py semantic "query"`
+This toolkit focuses on **pure utilities** - filesystem, web, visualization, etc.
 
 ## Usage
 
@@ -65,14 +63,12 @@ uv run --script sfa_find.py --help
 | `sfa_tts_edge.py` | Text-to-speech via Edge |
 | `sfa_tts_fish.py` | Text-to-speech via Fish Audio |
 | `sfa_clone_fish.py` | Voice cloning |
-| `sfa_graph.py` | Serverless knowledge graphs |
 | `sfa_viz.py` | Data visualization (Bokeh) |
 | `sfa_mermaid.py` | Diagram generation |
 | `sfa_chrome_ai.py` | Chrome automation |
 | `sfa_video.py` | Video extraction & transcription |
 | `sfa_repl.py` | Python code execution sandbox |
 | `sfa_fs.py` | Complete filesystem operations |
-| `sfa_unified_search.py` | Semantic search across sources |
 | `sfa_context_compressor.py` | Context size reduction |
 
 ## Requirements

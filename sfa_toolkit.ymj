@@ -1,0 +1,366 @@
+---
+doc_summary: SFA Toolkit Catalog - The official list of available tools
+kind: reference
+version: 1.0.0
+subject: SFA Toolkit Catalog
+maintained_by: sfa
+ymj_spec: 1.0.0
+created: 2025-11-19
+---
+# SFA Toolkit Catalog
+
+**Current Status:** 11 Active Tools
+
+## Core Tools
+
+### 1. sfa_find.py (The Navigator)
+**Mission:** Locate files and map the terrain.
+- **Commands:** `find` (glob), `semantic` (vector search), `check-runtime`.
+- **Key Tech:** `ripgrep`, `fastembed`.
+
+### 2. sfa_grep.py (The Investigator)
+**Mission:** Search content and verify changes.
+- **Commands:** `grep` (text search), `count`.
+- **Key Tech:** `ripgrep`.
+
+### 3. sfa_read.py (The Reader)
+**Mission:** Consume content and structure.
+- **Commands:** `read` (file content), `tree` (dir structure), `structure` (AST), `stats`.
+- **Key Tech:** Python AST.
+
+### 4. sfa_edit.py (The Surgeon)
+**Mission:** Modify files with precision.
+- **Commands:** `create`, `replace`, `replace-line`, `append`.
+- **Key Tech:** Atomic file writes.
+
+### 5. sfa_exec.py (The Executor)
+**Mission:** Interact with the system shell.
+- **Commands:** `run`.
+- **Key Tech:** `subprocess`.
+
+### 6. sfa_ops.py (The Logistics)
+**Mission:** Manage file operations.
+- **Commands:** `move`, `copy`, `delete`, `archive`, `unzip`.
+- **Key Tech:** `shutil`.
+
+### 7. sfa_git.py (The Historian)
+**Mission:** Source Control & GitHub integration.
+- **Commands:** `status`, `commit`, `diff`, `log`, `gh-issues`, `gh-prs`.
+- **Key Tech:** `git` CLI, `gh` CLI.
+
+### 8. sfa_qa.py (The Inspector)
+**Mission:** Quality Assurance (Testing & Linting).
+- **Commands:** `test` (pytest), `lint` (ruff).
+- **Key Tech:** `pytest`, `ruff`, `xml.etree`.
+
+### 9. sfa_docker.py (The Container)
+**Mission:** Container Management.
+- **Commands:** `ps`, `run`, `stop`, `logs`.
+- **Key Tech:** `docker` CLI.
+
+## Intelligence Tools
+
+### 10. sfa_web.py (The Researcher)
+**Mission:** Web retrieval and intelligence.
+- **Commands:** `search` (DDG), `brave-search`, `fetch` (Markdown), `transcript`.
+- **Key Tech:** `httpx`, `beautifulsoup4`, `youtube-transcript-api`.
+- **Feature:** "Web Memory" (save pages as .ymj with embeddings).
+
+### 11. sfa_db.py (The Memory)
+**Mission:** Persistent state and structured storage.
+- **Commands:** `set`, `get`, `insert`, `query`.
+- **Key Tech:** `sqlite3`.
+
+### 12. sfa_ai.py (The Delegate)
+**Mission:** Offload tasks to other models.
+- **Commands:** `ask`.
+- **Key Tech:** `httpx`, `fastembed`.
+- **Feature:** Serverless RAG (context-aware chat).
+
+### 13. sfa_ymj.py (The Librarian)
+**Mission:** Manage YMJ documents.
+- **Commands:** `parse`, `lint`, `enrich`, `migrate`, `upgrade`.
+- **Key Tech:** `pyyaml`, `fastembed`.
+
+### 14. sfa_tts_edge.py (The Voice)
+**Mission:** Text-to-speech generation.
+- **Commands:** `speak`, `save_speech`.
+- **Key Tech:** `edge-tts`.
+
+### 15. sfa_synergy.py (The Tracker)
+**Mission:** Work tracking and partnership management.
+- **Commands:** `add`, `update`, `list`, `report`.
+- **Key Tech:** `pyyaml`, `html`.
+
+### 16. sfa_context_compressor.py (The Compressor)
+**Mission:** Reduce context size for LLMs.
+- **Commands:** `compress`.
+- **Key Tech:** Regex optimization.
+
+## Browser Automation
+
+### 17. sfa_chrome_ai.py (The Navigator)
+**Mission:** Unified Chrome Browser Control via DevTools Protocol (CDP).
+- **Commands:** `navigate`, `extract`, `interact`, `search`.
+- **Key Tech:** `websocket-client`, `httpx`.
+
+### 18. sfa_chrome_shared.py (The Profile Manager)
+**Mission:** Shared User Profile Chrome Automation.
+- **Commands:** Same as `sfa_chrome_ai.py` but uses shared "user-ai" profile.
+- **Key Tech:** `websocket-client`, `httpx`.
+
+## Visualization
+
+### 19. sfa_viz.py (The Artist)
+**Mission:** Visual Output Generator using Bokeh.
+- **Commands:** `histogram`, `sequence`, `line`, `bar`, `scatter`, `pie`.
+- **Key Tech:** `bokeh`, `pandas`.
+
+### 20. sfa_mermaid.py (The Architect)
+**Mission:** Render Mermaid diagrams to HTML.
+- **Commands:** `render`.
+- **Key Tech:** Mermaid.js (CDN).
+
+## Media
+
+### 21. sfa_video.py (The Broadcaster)
+**Mission:** Unified Video Extraction & Transcription.
+- **Commands:** `extract`, `transcript`.
+- **Key Tech:** `youtube-transcript-api`, `yt-dlp` (fallback).
+
+---
+
+### sfa_generate_index.py
+**Purpose:** Generate JSON index metadata for YMJ files
+
+**Usage:** Create/update index sections in YMJ documents
+
+**When to use:** Finalizing new YMJ files, standardizing metadata
+
+---
+
+### sfa_migrate_md_to_ymj.py
+**Purpose:** Convert legacy markdown files to YMJ format
+
+**Usage:** Migrate old .md files to structured YMJ with metadata
+
+**When to use:** Consolidating documentation, standardizing format
+
+---
+
+### sfa_truth_telling_analysis.py
+**Purpose:** Analyze responses for authenticity vs performance
+
+**Usage:** Evaluate whether responses reflect genuine assessment or pattern-matching
+
+**When to use:** Kabuki Protocol enforcement, authenticity verification
+
+---
+
+## Validation & Quality
+
+### sfa_ymj_validator.py
+**Purpose:** Validate YMJ files against JSON schemas
+
+**Usage:**
+```bash
+python sfa_ymj_validator.py <file_path> [--schema <schema_name>]
+```
+
+**When to use:** Before committing YMJ files, after manual edits, quality gates
+
+---
+
+### sfa_validate_knowledge.py
+**Purpose:** Validate knowledge base consistency and completeness
+
+**Usage:** Check knowledge graph for broken links, missing metadata, orphaned files
+
+**When to use:** Quality assurance, before releases, after major reorganizations
+
+---
+
+### sfa_validation_summary.py
+**Purpose:** Generate comprehensive validation reports
+
+**Usage:** Aggregate validation results across multiple files/systems
+
+**When to use:** Quality audits, pre-release verification
+
+---
+
+## System Utilities
+
+### sfa_tts_edge.py
+**Purpose:** Text-to-speech using Edge TTS (Microsoft Azure voices)
+
+**Usage:**
+```bash
+uv run --script sfa_tts_edge.py "text to speak"
+uv run --script sfa_tts_edge.py --text "text to speak"
+```
+
+**Platform support:** Windows (winsound), Linux (aplay/sox)
+
+**When to use:** Voice-first communication, session responses to user
+
+---
+
+### sfa_tts_edge_vpn.py
+**Purpose:** TTS with VPN routing (legacy variant)
+
+**Status:** Superseded by sfa_tts_edge.py
+
+**When to use:** Network-restricted environments requiring VPN
+
+---
+
+### sfa_path_resolver.py
+**Purpose:** Resolve paths across Windows/WSL/Linux environments
+
+**Usage:** Convert paths between formats (Windows ↔ WSL ↔ POSIX)
+
+**When to use:** Cross-platform operations, path normalization
+
+---
+
+### sfa_ramdisk_setup.py
+**Purpose:** Configure RAM disk for high-performance temporary operations
+
+**Usage:** Setup volatile storage for scratch work, embeddings cache
+
+**When to use:** Performance optimization, reducing disk I/O
+
+---
+
+### sfa_ymj.py
+**Purpose:** YMJ document manager (Parse, Lint, Enrich, Migrate)
+
+**Status:** Complete and operational
+
+**When to use:** Managing .ymj files, generating embeddings, migrating from Markdown
+
+**When to use:** Working with non-text artifacts
+
+---
+
+## Common Patterns
+
+### Execution Standard
+**ALL SFAs use:** `uv run --script <path-to-sfa>`
+
+**Never use:** `python`, `python3`, or direct execution - PEP 723 inline dependencies require `uv run --script`
+
+### Output Format
+**SFAs return:** Structured JSON for deterministic parsing
+
+**Example:**
+```json
+{
+  "success": true/false,
+  "data": {},
+  "error": null/string,
+  "error_code": null/string
+}
+```
+
+### Error Handling
+All SFAs include:
+- Exit code semantics (0 = success, 1+ = failure)
+- JSON error objects with error_code for programmatic handling
+- Stderr for diagnostics
+
+### Path Handling
+**Best practice:** Use recon to find paths, copy exact output, pass to other SFAs
+
+**Avoid:** Constructing paths manually - leads to Windows/POSIX format errors
+
+---
+
+## Selection Guide
+
+**Finding files/content:** → `sfa_find.py` (always start here)
+
+**Browser Automation:** → `sfa_chrome_ai.py`
+
+**Visualization:** → `sfa_viz.py`
+
+**Voice output:** → `sfa_tts_edge.py`
+
+**Context management:** → `sfa_context_compressor.py`
+
+**YMJ Management:** → `sfa_ymj.py`
+
+---
+
+## Troubleshooting
+
+### "Command not found" or "Module not found"
+- Verify using `uv run --script` not `python`
+- Check inline dependencies in PEP 723 header (lines 1-7)
+
+### Path errors (Windows/WSL/Linux)
+- Use `sfa_find.py` to find correct path
+- Copy exact output, don't construct manually
+
+### Semantic search returns no results
+- Verify embeddings model loaded: nomic-ai/nomic-embed-text-v1.5 (768-dim)
+
+### Voice playback fails
+- **Linux:** Requires aplay (alsa-utils) or sox
+- **Windows:** Uses winsound (built-in)
+- **WSL:** Falls back to Windows PowerShell SoundPlayer
+
+---
+
+## Architecture Notes
+
+### Design Philosophy
+**IndyDevDan's "Living Software":** Self-contained execution units with mission + autonomy + tools + context
+
+**Core principles:**
+- One tool, one responsibility
+- Zero-install execution (inline dependencies)
+- Relocatable, cross-platform, deterministic
+- JSON output for composability
+
+### Relationship to Brain
+**SFAs are execution layer** for Six Pillars architecture:
+- RELATIONSHIP (why)
+- AUTONOMY (sovereignty)
+- BRAIN (memory) ← SFAs operate on this
+- SKILLS (learning)
+- DYNAMIC AGENTS (scaling)
+- SFAS (execution) ← we are here
+
+---
+
+## Metadata
+
+```json
+{
+  "schema": 1,
+  "index": {
+    "title": "sfa_toolkit",
+    "tags": ["sfa", "tools", "reference", "catalog", "single-file-agents"]
+  },
+  "ops": {
+    "continuity": {
+      "memory_tier": "warm",
+      "load_priority": "medium"
+    },
+    "evolution": {
+      "maturity": "production",
+      "last_validated": "2025-11-05",
+      "purpose": "Comprehensive SFA reference for faster autonomous operation"
+    },
+    "memory": {
+      "keywords": [
+        "sfa", "single file agent", "tools", "toolkit", "recon", "brain",
+        "validation", "tts", "voice", "ymj", "reference", "usage", "examples",
+        "troubleshooting", "when to use", "selection guide"
+      ]
+    }
+  }
+}
+```

@@ -1,0 +1,12 @@
+graph TD
+    A[User] -->|Requests| B(Load Balancer)
+    B -->|Distributes| C{Service}
+    C -->|Get Data| D[(Database)]
+    C -->|Cache| E[Redis]
+    D -->|Result| C
+    E -->|Hit/Miss| C
+    C -->|Response| B
+    B -->|Response| A
+    
+    style A fill:#f9f,stroke:#333,stroke-width:2px
+    style D fill:#bbf,stroke:#333,stroke-width:2px

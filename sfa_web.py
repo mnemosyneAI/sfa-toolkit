@@ -15,17 +15,18 @@
 # ///
 
 import argparse
-import json
-import re
-import sys
-import os
-import urllib.parse
-import hashlib
 import datetime
+import hashlib
+import json
+import os
+import re
 import subprocess
+import sys
 import tempfile
+import urllib.parse
+import urllib.request
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
 
 # Fix Windows console encoding for Unicode
 if sys.platform == "win32":
@@ -105,7 +106,8 @@ def _extract_video_id(url_or_id: str) -> str:
                     return v_param[0]
             elif parsed.path.startswith(("/v/", "/shorts/", "/embed/")):
                 return parsed.path.split("/")[2]
-    except Exception:
+    except (ValueError, IndexError, KeyError):
+        # URL parsing failed, will raise ValueError below
         pass
     raise ValueError(f"Could not extract video ID from: {url_or_id}")
 
@@ -351,7 +353,7 @@ def _is_youtube_url(url: str) -> bool:
             "youtu.be",
             "www.youtu.be",
         )
-    except:
+    except (ValueError, AttributeError):
         return False
 
 
@@ -638,7 +640,7 @@ For each post, provide:
 Format as a clear list."""
 
     try:
-        data = json.dumps({
+        payload = {
             "model": "grok-4-1-fast-non-reasoning",
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": 2000,
@@ -646,28 +648,30 @@ Format as a clear list."""
                 "mode": "auto",
                 "sources": [{"type": "x"}]
             }
-        }).encode("utf-8")
+        }
         
-        req = urllib.request.Request(
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (compatible; SyneBot/1.0)"
+        }
+        
+        resp = httpx.post(
             "https://api.x.ai/v1/chat/completions",
-            data=data,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-                "User-Agent": "Mozilla/5.0 (compatible; SyneBot/1.0)"
-            }
+            json=payload,
+            headers=headers,
+            timeout=60.0
         )
+        resp.raise_for_status()
+        result = resp.json()
+        content = result["choices"][0]["message"]["content"]
+        citations = result.get("citations", [])
         
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            result = json.loads(resp.read().decode("utf-8"))
-            content = result["choices"][0]["message"]["content"]
-            citations = result.get("citations", [])
-            
-            return {
-                "summary": content,
-                "citations": citations,
-                "sources_used": result.get("usage", {}).get("num_sources_used", 0)
-            }
+        return [{
+            "summary": content,
+            "citations": citations,
+            "sources_used": result.get("usage", {}).get("num_sources_used", 0)
+        }]
     except Exception as e:
         return [{"error": f"X Search failed: {str(e)}"}]
 
@@ -741,44 +745,46 @@ Respond with ONLY a JSON object in this exact format:
 If score > {threshold}, include the key content as clean markdown. If score <= {threshold}, set content to empty string."""
 
     try:
-        data = json.dumps({
+        payload = {
             "model": "grok-4-1-fast-non-reasoning",
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": 4000
-        }).encode("utf-8")
+        }
         
-        req = urllib.request.Request(
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (compatible; SyneBot/1.0)"
+        }
+        
+        resp = httpx.post(
             "https://api.x.ai/v1/chat/completions",
-            data=data,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-                "User-Agent": "Mozilla/5.0 (compatible; SyneBot/1.0)"
-            }
+            json=payload,
+            headers=headers,
+            timeout=90.0
         )
+        resp.raise_for_status()
+        result = resp.json()
+        response_text = result["choices"][0]["message"]["content"].strip()
         
-        with urllib.request.urlopen(req, timeout=90) as resp:
-            result = json.loads(resp.read().decode("utf-8"))
-            response_text = result["choices"][0]["message"]["content"].strip()
+        # Parse JSON response
+        try:
+            # Handle markdown code blocks
+            if response_text.startswith("```"):
+                response_text = response_text.split("```")[1]
+                if response_text.startswith("json"):
+                    response_text = response_text[4:].strip()
+                response_text = response_text.strip()
             
-            # Parse JSON response
-            try:
-                # Handle markdown code blocks
-                if response_text.startswith("```"):
-                    response_text = response_text.split("```")[1]
-                    if response_text.startswith("json"):
-                        response_text = response_text[4:].strip()
-                    response_text = response_text.strip()
-                
-                parsed = json.loads(response_text)
-                return {
-                    "url": url,
-                    "title": raw["title"],
-                    "score": parsed.get("score", 0),
-                    "content": parsed.get("content", "") if parsed.get("score", 0) > threshold else ""
-                }
-            except json.JSONDecodeError:
-                return {"error": f"Failed to parse Grok response: {response_text[:200]}"}
+            parsed = json.loads(response_text)
+            return {
+                "url": url,
+                "title": raw["title"],
+                "score": parsed.get("score", 0),
+                "content": parsed.get("content", "") if parsed.get("score", 0) > threshold else ""
+            }
+        except json.JSONDecodeError:
+            return {"error": f"Failed to parse Grok response: {response_text[:200]}"}
     except Exception as e:
         return {"error": f"Gated fetch failed: {str(e)}"}
 
@@ -1021,11 +1027,6 @@ def main():
     )
 
     args = parser.parse_args()
-
-    # Load secrets if provided
-    global SECRETS
-    if args.secrets:
-        SECRETS = load_secrets(args.secrets)
 
     # Handle commands (check both canonical and alias names)
     if args.command in ("search", "s"):

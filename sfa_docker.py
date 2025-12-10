@@ -32,10 +32,16 @@ except ImportError:
 # --- Helpers ---
 
 def _run_command(cmd: List[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace')
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace')
+    except FileNotFoundError:
+        raise
 
 def _check_docker() -> bool:
-    return subprocess.run(["docker", "--version"], capture_output=True).returncode == 0
+    try:
+        return subprocess.run(["docker", "--version"], capture_output=True).returncode == 0
+    except FileNotFoundError:
+        return False
 
 # --- Docker Logic ---
 

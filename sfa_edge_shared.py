@@ -60,7 +60,7 @@ def launch_edge(port: int = DEFAULT_PORT):
         httpx.get(f"http://localhost:{port}/json", timeout=1.0)
         # If successful, it's running
         return
-    except:
+    except Exception:
         pass # Not running, proceed to launch
 
     print(f"Launching Edge on port {port} with profile 'user-ai'...", file=sys.stderr)
@@ -75,7 +75,11 @@ def launch_edge(port: int = DEFAULT_PORT):
     ]
     
     # Launch in background
-    subprocess.Popen(cmd)
+    try:
+        subprocess.Popen(cmd)
+    except (FileNotFoundError, OSError) as e:
+        print(f"Error: Failed to launch Edge: {e}", file=sys.stderr)
+        return
     
     # Wait for it to come up
     for i in range(10):
@@ -83,7 +87,7 @@ def launch_edge(port: int = DEFAULT_PORT):
             httpx.get(f"http://localhost:{port}/json", timeout=1.0)
             print("Edge launched successfully.", file=sys.stderr)
             return
-        except:
+        except Exception:
             time.sleep(1)
             
     print("Warning: Edge launch initiated but port not yet responsive.", file=sys.stderr)
@@ -169,7 +173,7 @@ class CDPClient:
         for domain in domains:
             try:
                 self.send_command(f"{domain}.enable")
-            except:
+            except Exception:
                 pass 
 
 # --- Functionality Modules ---

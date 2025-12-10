@@ -107,39 +107,50 @@ def ide_gemini_ephemeral(query: str, model: str) -> tuple[bool, str]:
     cmd = ["gemini", "-p", query]
     if model:
         cmd.extend(["--model", model])
-    
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    output = '\n'.join(line for line in result.stdout.split('\n')
-                       if not line.startswith('[WARN]') 
-                       and not line.startswith('Warning:')
-                       and not line.startswith('Loaded cached'))
-    return (True, output.strip()) if result.returncode == 0 else (False, result.stderr.strip())
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        output = '\n'.join(line for line in result.stdout.split('\n')
+                           if not line.startswith('[WARN]')
+                           and not line.startswith('Warning:')
+                           and not line.startswith('Loaded cached'))
+        return (True, output.strip()) if result.returncode == 0 else (False, result.stderr.strip())
+    except FileNotFoundError:
+        return (False, "gemini command not found")
 
 
-def ide_gemini_fork(task: str, model: str, pane_id: Optional[int] = None, 
+def ide_gemini_fork(task: str, model: str, pane_id: Optional[int] = None,
                     cwd: Optional[str] = None) -> tuple[bool, str]:
     """Fork gemini to terminal with initial task."""
     cwd = cwd or os.getcwd()
     gemini_cmd = f'gemini --model {model} -y -i "{task}"'
-    
+
     args = ["wezterm", "cli", "spawn", "--cwd", cwd]
     if pane_id is not None:
         args.extend(["--pane-id", str(pane_id)])
     args.extend(["--", "bash", "-c", gemini_cmd])
-    
-    result = subprocess.run(args, capture_output=True, text=True)
-    if result.returncode == 0:
-        new_pane = result.stdout.strip()
-        return True, f"Forked to pane {new_pane}"
-    return False, result.stderr.strip()
+
+    try:
+        result = subprocess.run(args, capture_output=True, text=True)
+        if result.returncode == 0:
+            new_pane = result.stdout.strip()
+            return True, f"Forked to pane {new_pane}"
+        return False, result.stderr.strip()
+    except FileNotFoundError:
+        return False, "wezterm command not found"
 
 
 def ide_claude_ephemeral(query: str, model: str) -> tuple[bool, str]:
     """Ephemeral prompt via claude -p."""
     cmd = ["claude", "-p", "--model", model, query]
-    
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-    return (True, result.stdout.strip()) if result.returncode == 0 else (False, result.stderr.strip())
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        return (True, result.stdout.strip()) if result.returncode == 0 else (False, result.stderr.strip())
+    except FileNotFoundError:
+        return (False, "claude command not found")
+    except subprocess.TimeoutExpired:
+        return (False, "claude command timed out")
 
 
 def ide_claude_fork(task: str, model: str, pane_id: Optional[int] = None,
@@ -147,17 +158,20 @@ def ide_claude_fork(task: str, model: str, pane_id: Optional[int] = None,
     """Fork claude to terminal with initial task."""
     cwd = cwd or os.getcwd()
     claude_cmd = f'claude --model {model} "{task}"'
-    
+
     args = ["wezterm", "cli", "spawn", "--cwd", cwd]
     if pane_id is not None:
         args.extend(["--pane-id", str(pane_id)])
     args.extend(["--", "bash", "-c", claude_cmd])
-    
-    result = subprocess.run(args, capture_output=True, text=True)
-    if result.returncode == 0:
-        new_pane = result.stdout.strip()
-        return True, f"Forked to pane {new_pane}"
-    return False, result.stderr.strip()
+
+    try:
+        result = subprocess.run(args, capture_output=True, text=True)
+        if result.returncode == 0:
+            new_pane = result.stdout.strip()
+            return True, f"Forked to pane {new_pane}"
+        return False, result.stderr.strip()
+    except FileNotFoundError:
+        return False, "wezterm command not found"
 
 
 # === API HANDLERS ===
@@ -351,35 +365,53 @@ def api_lmstudio(query: str, model: str) -> tuple[bool, str]:
 
 def send_to_session(pane_id: int, text: str, provider: str = "gemini") -> tuple[bool, str]:
     """Send text to running session."""
-    # Clear input first
-    subprocess.run(f'printf "\\x03" | wezterm cli send-text --pane-id {pane_id} --no-paste',
-                   shell=True, capture_output=True)
-    
-    # Send text
-    cmd = ["wezterm", "cli", "send-text", "--pane-id", str(pane_id), "--no-paste", text]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        return False, "Failed to send text"
-    
-    # Submit - different for different providers
-    if provider == "claude":
-        # Claude needs Ctrl+M
-        subprocess.run(f'printf "\\x0d" | wezterm cli send-text --pane-id {pane_id} --no-paste',
-                       shell=True, capture_output=True)
-    else:
-        # Gemini needs double CR
-        for _ in range(2):
-            subprocess.run(f'echo -e "\\r" | wezterm cli send-text --pane-id {pane_id} --no-paste',
-                           shell=True, capture_output=True)
-    
-    return True, "Sent"
+    try:
+        # Clear input first - send Ctrl+C
+        subprocess.run(
+            ["wezterm", "cli", "send-text", "--pane-id", str(pane_id), "--no-paste"],
+            input="\x03",
+            text=True,
+            capture_output=True
+        )
+
+        # Send text
+        cmd = ["wezterm", "cli", "send-text", "--pane-id", str(pane_id), "--no-paste", text]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            return False, "Failed to send text"
+
+        # Submit - different for different providers
+        if provider == "claude":
+            # Claude needs Ctrl+M (carriage return)
+            subprocess.run(
+                ["wezterm", "cli", "send-text", "--pane-id", str(pane_id), "--no-paste"],
+                input="\x0d",
+                text=True,
+                capture_output=True
+            )
+        else:
+            # Gemini needs double CR
+            for _ in range(2):
+                subprocess.run(
+                    ["wezterm", "cli", "send-text", "--pane-id", str(pane_id), "--no-paste"],
+                    input="\r",
+                    text=True,
+                    capture_output=True
+                )
+
+        return True, "Sent"
+    except FileNotFoundError:
+        return False, "wezterm command not found"
 
 
 def read_from_session(pane_id: int, lines: int = 50) -> tuple[bool, str]:
     """Read output from session."""
     cmd = ["wezterm", "cli", "get-text", "--pane-id", str(pane_id), "--start-line", str(-lines)]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    return (True, result.stdout) if result.returncode == 0 else (False, result.stderr.strip())
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        return (True, result.stdout) if result.returncode == 0 else (False, result.stderr.strip())
+    except FileNotFoundError:
+        return (False, "wezterm command not found")
 
 
 # === ROUTER ===

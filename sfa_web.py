@@ -653,7 +653,7 @@ Format as a clear list."""
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (compatible; SyneBot/1.0)"
+            "User-Agent": "Mozilla/5.0 (compatible; SFABot/1.0)"
         }
         
         resp = httpx.post(
@@ -754,7 +754,7 @@ If score > {threshold}, include the key content as clean markdown. If score <= {
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (compatible; SyneBot/1.0)"
+            "User-Agent": "Mozilla/5.0 (compatible; SFABot/1.0)"
         }
         
         resp = httpx.post(

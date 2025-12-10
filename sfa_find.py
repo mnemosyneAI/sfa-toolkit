@@ -2,7 +2,7 @@
 # requires-python = ">=3.11,<3.14"
 # dependencies = [
 #     "fastmcp",
-#     "fastembed",
+#     "fastembed-gpu",
 #     "numpy",
 # ]
 # ///
@@ -112,7 +112,15 @@ def find_semantic(query: str, path: str = ".", top_k: int = 5) -> List[Dict[str,
 
     # 1. Embed Query
     try:
-        model = TextEmbedding(model_name="nomic-ai/nomic-embed-text-v1.5")
+        # Runtime CUDA detection using ONNX Runtime
+        import onnxruntime as ort
+        available = ort.get_available_providers()
+        if "CUDAExecutionProvider" in available:
+            providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+        else:
+            providers = ["CPUExecutionProvider"]
+        
+        model = TextEmbedding(model_name="nomic-ai/nomic-embed-text-v1.5", providers=providers)
         query_embedding = list(model.embed([query]))[0]
     except Exception as e:
         return [{"error": f"Embedding failed: {e}"}]
@@ -155,7 +163,7 @@ def find_semantic(query: str, path: str = ".", top_k: int = 5) -> List[Dict[str,
                             if line.strip().startswith("doc_summary:"):
                                 summary = line.split(":", 1)[1].strip()
                                 break
-                    except:
+                    except Exception:
                         pass
 
                 candidates.append({

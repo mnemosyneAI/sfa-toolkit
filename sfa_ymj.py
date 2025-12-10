@@ -1,29 +1,17 @@
+#!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.11,<3.14"
 # dependencies = [
 #     "fastmcp",
 #     "pyyaml",
-#     "torch>=2.0.0",
 #     "fastembed-gpu",
 #     "numpy",
-# ]
-#
-# [[tool.uv.index]]
-# name = "pytorch-cu121"
-# url = "https://download.pytorch.org/whl/cu121"
-# explicit = true
-#
-# [tool.uv.sources]
-# torch = [
-#     { index = "pytorch-cu121", marker = "sys_platform == 'win32'" },
 # ]
 # ///
 #
 # GPU ACCELERATION NOTES:
 # - fastembed-gpu includes onnxruntime-gpu for CUDA support
-# - PyTorch CUDA 12.1 wheel from pytorch.org index (not PyPI)
-# - Must import torch BEFORE TextEmbedding to preload CUDA DLLs for ONNX Runtime
-# - Must call TextEmbedding with providers=["CUDAExecutionProvider", "CPUExecutionProvider"]
+# - Runtime CUDA detection: uses GPU if CUDAExecutionProvider available, else CPU
 # - Result: 10-14x speedup (32 items/sec CPU -> 447 items/sec GPU @ batch=20)
 
 import argparse
@@ -267,14 +255,20 @@ def _enrich_document(
 
     if use_embeddings and needs_embedding:
         try:
-            # CRITICAL: Import torch first to preload CUDA DLLs for ONNX Runtime
-            import torch
             from fastembed import TextEmbedding
+
+            # Runtime CUDA detection using ONNX Runtime
+            import onnxruntime as ort
+            available = ort.get_available_providers()
+            if "CUDAExecutionProvider" in available:
+                providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+            else:
+                providers = ["CPUExecutionProvider"]
 
             # Initialize model (downloads if needed)
             embedding_model = TextEmbedding(
                 model_name="nomic-ai/nomic-embed-text-v1.5",
-                providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+                providers=providers,
             )
 
             # Embed the body (truncate if too large? fastembed handles chunking usually, but for doc embedding we might want a summary or full text)
@@ -526,7 +520,7 @@ def _migrate_md(path: str) -> str:
             if isinstance(existing_header, dict):
                 header.update(existing_header)
             body = content[end_idx + 4 :].strip()
-        except:
+        except Exception:
             pass  # Failed to parse existing frontmatter, treat as body
 
     # Create YMJ
@@ -773,76 +767,93 @@ def main():
             sys.exit(0)
 
         print(f"Found {total} YMJ files. Starting bulk enrichment...", file=sys.stderr)
-
-        # Pre-initialize embedding model if needed (for GPU warmup)
-        if not args.no_embed:
-            print("Initializing GPU-accelerated embedding model...", file=sys.stderr)
-            try:
-                # CRITICAL: Import torch first to preload CUDA DLLs
-                import torch
-                from fastembed import TextEmbedding
-
-                _temp_model = TextEmbedding(
-                    model_name="nomic-ai/nomic-embed-text-v1.5",
-                    providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
-                )
-                print("✓ Embedding model ready", file=sys.stderr)
-            except Exception as e:
-                print(
-                    f"Warning: GPU initialization failed, will use CPU: {e}",
-                    file=sys.stderr,
-                )
-
         results = {"total": total, "updated": 0, "skipped": 0, "errors": 0}
 
+        # Phase 1: Load docs and do non-embedding updates (hash, structure)
+        print("Phase 1: Loading docs and computing hashes...", file=sys.stderr)
+        docs_needing_embed = []  # (doc, file_path) tuples
+        
         for idx, file_path in enumerate(ymj_files, 1):
             try:
                 doc = YMJDocument(str(file_path))
-
-                # Check if we should skip (has embedding and not --force)
+                
+                # Check if we should skip embedding
                 has_embedding = (
                     doc.valid_structure
                     and "index" in doc.footer
                     and "embedding" in doc.footer.get("index", {})
                 )
-
-                if has_embedding and not args.force and not args.no_embed:
-                    results["skipped"] += 1
-                    print(
-                        f"[{idx}/{total}] SKIP {file_path.name} (has embedding, use --force)",
-                        file=sys.stderr,
-                    )
-                    continue
-
-                res = _enrich_document(
-                    doc, use_embeddings=not args.no_embed, force_embedding=args.force
-                )
-
+                
+                # Do non-embedding updates first
+                res = _enrich_document(doc, use_embeddings=False, force_embedding=False)
+                
                 if "error" in res:
                     results["errors"] += 1
-                    error_msg = res.get("error", "unknown")
-                    print(
-                        f"[{idx}/{total}] ✗ {file_path.name}: {error_msg}",
-                        file=sys.stderr,
-                    )
-                elif res.get("status") == "updated":
-                    results["updated"] += 1
-                    updates = ", ".join(res.get("updates", []))
-                    print(
-                        f"[{idx}/{total}] ✓ {file_path.name} ({updates})",
-                        file=sys.stderr,
-                    )
-                else:
-                    results["skipped"] += 1
-                    print(
-                        f"[{idx}/{total}] - {file_path.name} (no changes)",
-                        file=sys.stderr,
-                    )
-
+                    print(f"[{idx}/{total}] ✗ {file_path.name}: {res.get('error')}", file=sys.stderr)
+                    continue
+                
+                # Determine if this doc needs embedding
+                if not args.no_embed:
+                    needs_embed = args.force or not has_embedding
+                    if needs_embed and doc.valid_structure:
+                        docs_needing_embed.append((doc, file_path))
+                    elif has_embedding and not args.force:
+                        results["skipped"] += 1
+                
             except Exception as e:
                 results["errors"] += 1
                 print(f"[{idx}/{total}] ✗ {file_path.name}: {e}", file=sys.stderr)
 
+        # Phase 2: Batch embed all docs that need it (in chunks to avoid OOM)
+        if docs_needing_embed and not args.no_embed:
+            BATCH_SIZE = 1  # Chunk size (small for large docs)
+            # No truncation - fastembed handles chunking internally
+            print(f"Phase 2: Batch embedding {len(docs_needing_embed)} docs (batch_size={BATCH_SIZE})...", file=sys.stderr)
+            try:
+                from fastembed import TextEmbedding
+                import onnxruntime as ort
+                
+                available = ort.get_available_providers()
+                if "CUDAExecutionProvider" in available:
+                    providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+                    print("Using GPU (CUDA)", file=sys.stderr)
+                else:
+                    providers = ["CPUExecutionProvider"]
+                    print("Using CPU", file=sys.stderr)
+
+                model = TextEmbedding(model_name="nomic-ai/nomic-embed-text-v1.5", providers=providers)
+                
+                # Process in chunks
+                all_embeddings = []
+                for i in range(0, len(docs_needing_embed), BATCH_SIZE):
+                    chunk = docs_needing_embed[i:i+BATCH_SIZE]
+                    bodies = [doc.body for doc, _ in chunk]
+                    chunk_num = i // BATCH_SIZE + 1
+                    total_chunks = (len(docs_needing_embed) + BATCH_SIZE - 1) // BATCH_SIZE
+                    print(f"  Batch {chunk_num}/{total_chunks}: embedding {len(bodies)} texts...", file=sys.stderr)
+                    chunk_embeddings = list(model.embed(bodies))
+                    all_embeddings.extend(chunk_embeddings)
+                
+                print("Embedding complete.", file=sys.stderr)
+                
+                # Apply embeddings and save
+                print("Phase 3: Saving docs...", file=sys.stderr)
+                for (doc, file_path), embedding in zip(docs_needing_embed, all_embeddings):
+                    try:
+                        if "index" not in doc.footer:
+                            doc.footer["index"] = {}
+                        doc.footer["index"]["embedding"] = embedding.tolist()
+                        doc.footer["index"]["model"] = "nomic-embed-text-v1.5"
+                        doc.save()
+                        results["updated"] += 1
+                    except Exception as e:
+                        results["errors"] += 1
+                        print(f"✗ Error saving {file_path.name}: {e}", file=sys.stderr)
+                        
+            except Exception as e:
+                print(f"Batch embedding failed: {e}", file=sys.stderr)
+                results["errors"] += len(docs_needing_embed)
+        
         print(json.dumps(results, indent=2))
 
     elif args.command == "migrate":

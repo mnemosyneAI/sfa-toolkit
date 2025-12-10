@@ -119,7 +119,7 @@ class CDPClient:
         for domain in domains:
             try:
                 self.send_command(f"{domain}.enable")
-            except:
+            except Exception:
                 pass # Some domains might not support enable or be already enabled
 
 # --- Functionality Modules ---

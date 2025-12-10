@@ -923,7 +923,7 @@ def search(
         try:
             with open(fp, "r", encoding="utf-8", errors="replace") as f:
                 file_lines = f.readlines()
-        except:
+        except Exception:
             continue
 
         file_matches = [i for i, line in enumerate(file_lines) if regex.search(line)]

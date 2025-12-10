@@ -47,7 +47,7 @@ async def _run_async_proc(cmd: List[str], cwd: str = ".") -> Tuple[bool, str, st
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=SFA_SUBPROC_TIMEOUT)
         except asyncio.TimeoutError:
             try: proc.kill()
-            except: pass
+            except Exception: pass
             return (False, "", f"Process timed out after {SFA_SUBPROC_TIMEOUT} seconds")
         
         return (proc.returncode == 0, stdout.decode('utf-8', errors='ignore'), stderr.decode('utf-8', errors='ignore'))

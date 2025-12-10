@@ -245,19 +245,23 @@ def add_silence_prepend(audio_data, delay_ms=SILENCE_DELAY_MS):
         ffmpeg_bin = (
             "ffmpeg.exe" if platform.system().lower() == "windows" else "ffmpeg"
         )
-        result = subprocess.run(
-            [
-                ffmpeg_bin,
-                "-y",  # overwrite output files
-                "-i",
-                raw_path,
-                "-af",
-                f"adelay={delay_ms}|{delay_ms}",
-                fixed_path,
-            ],
-            capture_output=True,
-            text=True,
-        )
+        try:
+            result = subprocess.run(
+                [
+                    ffmpeg_bin,
+                    "-y",  # overwrite output files
+                    "-i",
+                    raw_path,
+                    "-af",
+                    f"adelay={delay_ms}|{delay_ms}",
+                    fixed_path,
+                ],
+                capture_output=True,
+                text=True,
+            )
+        except FileNotFoundError:
+            print(f"Error: {ffmpeg_bin} not found", file=sys.stderr)
+            return None, False
 
         if result.returncode == 0:
             # Read the processed audio
@@ -275,7 +279,7 @@ def add_silence_prepend(audio_data, delay_ms=SILENCE_DELAY_MS):
             os.unlink(raw_path)
             if success:
                 os.unlink(fixed_path)
-        except:
+        except Exception:
             pass
 
         return processed_audio, success
@@ -307,7 +311,7 @@ def play_audio_linux(audio_data):
                 # Cleanup static file
                 try:
                     os.unlink(audio_path)
-                except:
+                except Exception:
                     pass
                 return True
         except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -321,7 +325,7 @@ def play_audio_linux(audio_data):
             if result.returncode == 0:
                 try:
                     os.unlink(audio_path)
-                except:
+                except Exception:
                     pass
                 return True
         except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -369,7 +373,7 @@ def play_audio_optimized(file_path: Path):
                 timeout=300,
             )
             return True
-        except:
+        except Exception:
             pass
 
         raise RuntimeError("All playback methods failed")

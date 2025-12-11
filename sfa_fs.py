@@ -6,6 +6,29 @@
 # ]
 # ///
 
+# ==============================================================================
+# DESIGN PHILOSOPHY: USER-FIRST TOOLING
+# ==============================================================================
+#
+# This tool is built by its primary user, for its primary user.
+#
+# The standard is simple: it works on the first attempt, every time.
+#
+# If the tool produces an error or unexpected behavior, the TOOL is wrong -
+# not the user. When the person who built the tool reaches for it and stumbles,
+# that's a bug report, not a learning opportunity.
+#
+# Implications:
+#   - Commands work the way you'd naturally try them
+#   - Errors are clear and actionable
+#   - No memorization required - intuition should suffice
+#   - If you have to check --help, the interface failed
+#
+# This is dog-fooding at its purest. The builder is the user.
+# The tool must fit the hand.
+#
+# ==============================================================================
+
 """
 SFA Filesystem Tool (sfa_fs.py) v2.2.0
 Professional filesystem operations with Unix philosophy design.
@@ -53,9 +76,7 @@ COMMANDS:
     sort <file>                Sort lines
     unique <file>              Remove duplicate lines
 
-  Not yet in CLI (functions exist, parsers pending):
-    char-replace               Character-level replace
-    extract-markdown           Extract markdown from .ymj
+
 
 VERBOSITY:
   (default) - Silent operation, data only
